@@ -46,6 +46,7 @@ scene files to merge.
 | Place block | Right click |
 | Change block | Mouse wheel |
 | Release / capture mouse | `Esc` |
+| Open Texture Editor | `F1` |
 
 ## What works today
 
@@ -65,8 +66,20 @@ scene files to merge.
 - **Wildlife** — procedurally-built chickens (skittish), cows (passive) and
   bulls (charge when you get close), spawned around you by a season-aware
   spawner, with **seasonal migration** when the season turns.
-- **Per-vertex colour variation** to break up flat terrain, plus a terrain
-  shader ready for the block texture system.
+- **Per-vertex colour variation** to break up flat terrain.
+- **Texture system + in-game pixel Texture Editor** (press **F1**): paint a
+  16×16 texture for any block, save it, and it appears in the world immediately.
+  Blocks with no texture fall back to their flat colour, so the world always
+  renders.
+
+## Making your own block textures
+
+Press **F1** in game to open the Texture Editor. Pick a block from the list,
+paint on the 16×16 grid (colour picker + quick palette + eraser), hit **Save**,
+then **Back to Game** — your art is written to `user://textures/blocks/` and
+shows on that block right away. To ship a texture with the project instead, drop
+a 16×16 `<name>.png` into `textures/blocks/`. See that folder's README for
+details.
 
 ## Project layout
 
@@ -81,9 +94,10 @@ src/
     BlockRegistry.gd     Block types & properties (autoload: BlockDB)
     Chunk.gd             Raw voxel storage
     TerrainGenerator.gd  Noise-based terrain + biomes + trees (thread-safe)
-    ChunkMesher.gd       Culled meshing + ambient occlusion + tint UVs
+    ChunkMesher.gd       Culled meshing + ambient occlusion + atlas UVs
     VoxelWorld.gd        Chunk streaming, collision, block editing
-    voxel_terrain.gdshader  Opaque terrain shader (per-vertex + season tint)
+    TextureAtlas.gd      Runtime block texture atlas (autoload: Textures)
+    voxel_terrain.gdshader  Opaque terrain shader (atlas + shade + season tint)
   player/Player.gd       First-person controller + block interaction
   entities/
     Animal.gd            Base wildlife AI (wander/flee/charge/migrate)
@@ -93,6 +107,8 @@ src/
     DayNightCycle.gd     Sun + sky over a 24h cycle
     SeasonManager.gd     Seasons + live foliage tinting
   ui/HUD.gd
+tools/TextureEditor.tscn/.gd   In-game pixel texture editor (F1)
+textures/blocks/         Optional shipped block PNGs (16×16)
 docs/                    Architecture, design vision, roadmap
 ```
 

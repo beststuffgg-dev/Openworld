@@ -67,6 +67,9 @@ func _register(id: int, name: String, color: Color, solid: bool, transparent: bo
 	assert(id == _blocks.size(), "Block ids must be registered in enum order")
 	_blocks.append(BlockInfo.new(id, name, color, solid, transparent))
 
+func count() -> int:
+	return _blocks.size()
+
 func get_block(id: int) -> BlockInfo:
 	if id < 0 or id >= _blocks.size():
 		return _blocks[Type.AIR]

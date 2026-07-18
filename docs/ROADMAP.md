@@ -27,7 +27,9 @@ Make the core scale and look better before piling gameplay on it.
 - ⬜ **Greedy meshing** (merge coplanar quads) — big vertex-count win
 - ⬜ **Vertical chunk sections** (stacked 16³) for taller worlds & true 3D LOD
 - ⬜ **Chunk LOD** + distance-based mesh simplification
-- ⬜ **Texture atlas + PBR materials**, connected textures, bevelled edge shader
+- 🟡 **Texture atlas** with per-block 16×16 tiles + an in-game pixel **Texture
+      Editor** (F1) that saves PNGs picked up live by the atlas. PBR maps,
+      connected textures and a bevelled-edge shader still to come.
 - ⬜ **Occlusion culling**, GPU instancing for foliage
 - ⬜ **Chunk save/load & compression** (voxels are already a `PackedByteArray`)
 - ⬜ Half-blocks / slopes / stairs (sub-voxel shapes) for smoother terrain

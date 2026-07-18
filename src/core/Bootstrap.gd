@@ -92,3 +92,7 @@ func _setup_ui() -> void:
 func _process(_delta: float) -> void:
 	if not _spawned:
 		_spawned = _player.try_ground_spawn()
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("open_texture_editor"):
+		get_tree().change_scene_to_file("res://tools/TextureEditor.tscn")

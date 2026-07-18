@@ -1,21 +1,27 @@
 shader_type spatial;
 // Opaque terrain shader for Project Horizons.
 //
-// The mesh bakes albedo*ambient-occlusion into COLOR and stores a per-vertex
-// "seasonal tint weight" in UV.x (1.0 for grass & leaves, 0.0 for everything
-// else). A global season uniform then modulates the tintable vertices live, so
-// the whole world changes with the seasons without re-meshing a single chunk.
+// Per vertex the mesh provides:
+//   - UV:      atlas coordinates for this block's tile.
+//   - COLOR.rgb: a grayscale shade factor (ambient occlusion * per-block
+//                brightness variation) that softens edges and de-flattens the
+//                terrain.
+//   - COLOR.a: a seasonal tint weight (1 for grass & leaves, 0 otherwise).
+//
+// Final albedo = atlas texel (the block's colour/texture) * shade * season tint.
+// One shared material means updating the atlas or season uniforms recolours the
+// whole world with no re-meshing.
 render_mode cull_back, diffuse_burley, specular_schlick_ggx;
 
-// Multiplicative colour applied to tintable surfaces; 1,1,1 == no change.
+uniform sampler2D atlas : source_color, filter_nearest;
 uniform vec3 season_tint : source_color = vec3(1.0, 1.0, 1.0);
-// How strongly the current season shows, 0 (off) .. 1 (full).
 uniform float season_strength : hint_range(0.0, 1.0) = 0.0;
 
 void fragment() {
-	float weight = UV.x * season_strength;
+	vec4 tex = texture(atlas, UV);
+	float weight = COLOR.a * season_strength;
 	vec3 tint = mix(vec3(1.0), season_tint, weight);
-	ALBEDO = COLOR.rgb * tint;
+	ALBEDO = tex.rgb * COLOR.rgb * tint;
 	ROUGHNESS = 0.9;
 	METALLIC = 0.0;
 }

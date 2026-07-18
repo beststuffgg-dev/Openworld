@@ -27,6 +27,9 @@ const FACES := {
 	"east":   {"normal": Vector3(1, 0, 0),  "dir": Vector3i(1, 0, 0)},
 }
 
+# Atlas-tile UV for each of the four face corners (matches FACE_VERTS order).
+const UV_CORNERS := [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
+
 # Corner vertex offsets per face (unit cube, CCW when viewed from outside so the
 # generated winding is front-facing under the default back-face culling).
 const FACE_VERTS := {
@@ -73,19 +76,20 @@ static func build(chunk: Chunk, sampler: Callable) -> ArrayMesh:
 	return mesh
 
 static func _emit_block(sa: SurfaceArrays, id: int, lx: int, ly: int, lz: int, gx: int, gz: int, sampler: Callable) -> void:
-	# Slight per-block brightness variation breaks up large flat expanses of one
-	# colour without any texture data.
+	var is_fluid := BlockDB.is_transparent(id)
+	# Slight per-block brightness variation breaks up large flat expanses.
 	var variation := 0.9 + 0.1 * _hash01(gx, ly, gz)
-	var c := BlockDB.get_color(id)
-	var base_color := Color(c.r * variation, c.g * variation, c.b * variation, c.a)
 	var tint_weight := 1.0 if BlockDB.is_tintable(id) else 0.0
+	# Water is drawn with its own vertex-colour material, so it keeps the block
+	# colour in COLOR; opaque blocks take their colour from the atlas texture and
+	# put only the shade factor in COLOR.
+	var c := BlockDB.get_color(id)
+	var fluid_color := Color(c.r * variation, c.g * variation, c.b * variation, c.a)
+	var uv_rect := Textures.uv_rect(id)
 
 	for face in FACES:
 		var dir: Vector3i = FACES[face]["dir"]
-		var nx := gx + dir.x
-		var ny := ly + dir.y
-		var nz := gz + dir.z
-		var neighbor := int(sampler.call(nx, ny, nz))
+		var neighbor := int(sampler.call(gx + dir.x, ly + dir.y, gz + dir.z))
 		# Emit the face only if the neighbour doesn't hide it. Solid neighbours
 		# cull; a transparent block hides a face only from another block of the
 		# same type (so a water surface stays single-sided).
@@ -93,9 +97,9 @@ static func _emit_block(sa: SurfaceArrays, id: int, lx: int, ly: int, lz: int, g
 			continue
 		if neighbor == id:
 			continue
-		_emit_face(sa, face, base_color, tint_weight, id, lx, ly, lz, gx, gz, sampler)
+		_emit_face(sa, face, is_fluid, fluid_color, variation, tint_weight, uv_rect, gx, ly, gz, lx, lz, sampler)
 
-static func _emit_face(sa: SurfaceArrays, face: String, color: Color, tint_weight: float, id: int, lx: int, ly: int, lz: int, gx: int, gz: int, sampler: Callable) -> void:
+static func _emit_face(sa: SurfaceArrays, face: String, is_fluid: bool, fluid_color: Color, variation: float, tint_weight: float, uv_rect: Rect2, gx: int, ly: int, gz: int, lx: int, lz: int, sampler: Callable) -> void:
 	var normal: Vector3 = FACES[face]["normal"]
 	var corners: Array = FACE_VERTS[face]
 	var origin := Vector3(lx, ly, lz)
@@ -103,14 +107,20 @@ static func _emit_face(sa: SurfaceArrays, face: String, color: Color, tint_weigh
 
 	for i in 4:
 		var offset: Vector3 = corners[i]
-		var ao := 1.0
-		if not BlockDB.is_transparent(id):
-			ao = _vertex_ao(face, offset, gx, ly, gz, sampler)
-		var shaded := Color(color.r * ao, color.g * ao, color.b * ao, color.a)
+		var col: Color
+		var uv: Vector2
+		if is_fluid:
+			col = fluid_color
+			uv = Vector2.ZERO
+		else:
+			var shade := _vertex_ao(face, offset, gx, ly, gz, sampler) * variation
+			col = Color(shade, shade, shade, tint_weight)
+			var uvc: Vector2 = UV_CORNERS[i]
+			uv = uv_rect.position + Vector2(uvc.x * uv_rect.size.x, uvc.y * uv_rect.size.y)
 		sa.positions.append(origin + offset)
 		sa.normals.append(normal)
-		sa.colors.append(shaded)
-		sa.uvs.append(Vector2(tint_weight, 0.0))
+		sa.colors.append(col)
+		sa.uvs.append(uv)
 
 	sa.indices.append_array(PackedInt32Array([start, start + 1, start + 2, start, start + 2, start + 3]))
 
