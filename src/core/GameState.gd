@@ -14,11 +14,12 @@ var world_seed: int = DEFAULT_SEED
 
 ## Chunk radius kept at FULL detail around the player (a chunk spans
 ## 16 * Chunk.VOXEL_SCALE = 8 m). With sparse/uniform-section storage a tall
-## column now costs ~50-80 KB (deep rock and sky are uniform), so the loaded
-## radius can be much larger than the naive full-array version allowed.
-var view_distance_chunks: int = 6
-## Total loaded radius; rings beyond view_distance render as coarse LOD columns.
-var lod_distance_chunks: int = 12
+## column now costs ~50-80 KB, so a decent radius is affordable at full detail.
+var view_distance_chunks: int = 10
+## Total loaded radius. LOD is disabled while its boundary cracks are unsolved
+## (set > view_distance_chunks to re-enable coarse far chunks). Full detail is
+## cheap enough now that this equals the view distance for a seam-free image.
+var lod_distance_chunks: int = 10
 
 ## Maximum chunk columns to (re)mesh per frame. Sparse storage + the buried-rock
 ## skip keep each column to a handful of sections, so a small budget streams the

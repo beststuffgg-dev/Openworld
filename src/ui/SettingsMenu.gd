@@ -53,6 +53,7 @@ func _build() -> void:
 	_root = Control.new()
 	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_root.process_mode = Node.PROCESS_MODE_ALWAYS  # buttons must work while paused
 	add_child(_root)
 
 	var dim := ColorRect.new()
@@ -60,9 +61,15 @@ func _build() -> void:
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(dim)
 
+	# A CenterContainer keeps the panel truly centred (PRESET_CENTER on a
+	# container mis-sizes it into the corner).
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(center)
+
 	var panel := PanelContainer.new()
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	_root.add_child(panel)
+	center.add_child(panel)
 
 	var box := VBoxContainer.new()
 	box.custom_minimum_size = Vector2(320, 0)

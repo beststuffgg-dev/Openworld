@@ -44,10 +44,10 @@ func _setup_environment() -> void:
 	env.ambient_light_energy = 0.5
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	# SSAO provides the soft block-edge shading (greedy meshing drops baked AO).
-	# Radius is tuned for the 0.5 m voxels.
+	# Kept gentle so it doesn't over-darken the scene.
 	env.ssao_enabled = true
-	env.ssao_radius = 0.6
-	env.ssao_intensity = 2.0
+	env.ssao_radius = 0.5
+	env.ssao_intensity = 1.0
 	env.glow_enabled = true
 	env.fog_enabled = true
 	env.fog_density = 0.004
