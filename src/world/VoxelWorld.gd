@@ -120,9 +120,9 @@ func _build_section_node(coord: Vector2i, sec: int) -> void:
 	var nodes: Array = _nodes[coord]
 	var mi: MeshInstance3D = nodes[sec]
 
-	# Skip sections that never had any block written.
+	# Skip empty sections, and solid sections that are fully buried.
 	var mesh: ArrayMesh = null
-	if chunk.section_has_content(sec):
+	if chunk.section_has_content(sec) and not _section_buried(coord, chunk, sec):
 		var y_lo := sec * Chunk.SECTION_H
 		mesh = ChunkMesher.build_section(chunk, _sample_block, y_lo, y_lo + Chunk.SECTION_H)
 
@@ -150,6 +150,24 @@ func _build_section_node(coord: Vector2i, sec: int) -> void:
 	shape.shape = mesh.create_trimesh_shape()
 	body.add_child(shape)
 	mi.add_child(body)
+
+## True when section `sec` is fully solid and so are all six neighbouring
+## sections — it has no visible faces, so meshing it is pure waste. Below the
+## world floor counts as solid (we never render the underside of the world); a
+## not-yet-loaded horizontal neighbour counts as NOT solid (mesh to be safe, then
+## re-cull once it loads). Conservative: a wrong "not buried" only costs a mesh.
+func _section_buried(coord: Vector2i, chunk: Chunk, sec: int) -> bool:
+	if not chunk.section_full_solid(sec):
+		return false
+	var below := true if sec == 0 else chunk.section_full_solid(sec - 1)
+	var above := false if sec == Chunk.SECTIONS - 1 else chunk.section_full_solid(sec + 1)
+	if not (below and above):
+		return false
+	for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var nb: Chunk = _chunks.get(coord + off)
+		if nb == null or not nb.section_full_solid(sec):
+			return false
+	return true
 
 func _unload_far(center: Vector2i) -> void:
 	var r := GameState.view_distance_chunks + 2

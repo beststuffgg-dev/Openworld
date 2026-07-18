@@ -9,7 +9,10 @@ extends RefCounted
 ## and filled entirely on a background thread.
 
 const CHUNK_SIZE := 16
-const CHUNK_HEIGHT := 256
+## 2048 voxels * VOXEL_SCALE (0.5 m) = a 1024 m tall world, enough for ~1 km
+## mountains. Deep solid rock is kept affordable by the "buried section" skip
+## (section_full_solid + the mesher) rather than by limiting height.
+const CHUNK_HEIGHT := 2048
 const VOLUME := CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT
 
 ## A column is meshed as a stack of vertical SECTIONS, each SECTION_H voxels
@@ -19,7 +22,8 @@ const VOLUME := CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT
 ## sections" of the roadmap. Storage stays a single column array so face culling
 ## between sections is automatic.
 const SECTION_H := 32
-const SECTIONS := CHUNK_HEIGHT / SECTION_H  # 8
+## 64 sections; this is also the max, since section flags pack into a 64-bit int.
+const SECTIONS := CHUNK_HEIGHT / SECTION_H  # 2048 / 32 = 64
 
 ## Physical size of one voxel in world units (metres). Minecraft blocks are 1.0;
 ## this makes each block 0.5 — half Minecraft's size — for finer building detail.
@@ -48,6 +52,13 @@ var dirty: bool = false
 # section just meshes to null once); that's a negligible, self-correcting cost.
 var _section_nonair: int = 0
 
+# Bit `s` set when section `s` is entirely solid blocks. Combined with its
+# neighbours (VoxelWorld), a fully-solid section surrounded by fully-solid
+# sections has no visible faces and is skipped — this is what makes a 2048-tall
+# world of mostly-buried rock affordable. Computed once after generation; digging
+# clears the bit so the section re-meshes.
+var _section_full: int = 0
+
 func _init(p_cx: int, p_cz: int) -> void:
 	cx = p_cx
 	cz = p_cz
@@ -71,13 +82,38 @@ func set_local(lx: int, ly: int, lz: int, id: int) -> void:
 	if not in_bounds(lx, ly, lz):
 		return
 	voxels[index(lx, ly, lz)] = id
+	@warning_ignore("integer_division")
+	var sec := ly / SECTION_H
 	if id != BlockDB.Type.AIR:
-		@warning_ignore("integer_division")
-		_section_nonair |= 1 << (ly / SECTION_H)
+		_section_nonair |= 1 << sec
+	else:
+		# Digging punches a hole, so the section is no longer fully solid.
+		_section_full &= ~(1 << sec)
 
 ## True if section `sec` has ever had a non-air block (so it's worth meshing).
 func section_has_content(sec: int) -> bool:
 	return (_section_nonair & (1 << sec)) != 0
+
+## True if every voxel in section `sec` is a solid block.
+func section_full_solid(sec: int) -> bool:
+	return (_section_full & (1 << sec)) != 0
+
+## Recomputes the fully-solid flags. Call once after generation fills the column
+## (safe on a worker thread — reads only the block registry).
+func compute_section_flags() -> void:
+	_section_full = 0
+	var vol := SECTION_H * CHUNK_SIZE * CHUNK_SIZE
+	for sec in SECTIONS:
+		if not section_has_content(sec):
+			continue  # all air -> not solid
+		var start := sec * SECTION_H * CHUNK_SIZE * CHUNK_SIZE
+		var full := true
+		for i in vol:
+			if not BlockDB.is_solid(voxels[start + i]):
+				full = false
+				break
+		if full:
+			_section_full |= 1 << sec
 
 func world_origin() -> Vector3:
 	return Vector3(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE)

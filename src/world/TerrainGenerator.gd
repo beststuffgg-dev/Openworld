@@ -12,8 +12,11 @@ extends RefCounted
 
 const CHUNK_SIZE := Chunk.CHUNK_SIZE
 const CHUNK_HEIGHT := Chunk.CHUNK_HEIGHT
-const SEA_LEVEL := 72
+const SEA_LEVEL := 300      # ~150 m — leaves room for ~1 km peaks above it
 const DIRT_DEPTH := 4
+## Caves are only carved within this many voxels below the surface, so the deep
+## rock stays fully solid and its sections skip meshing (see Chunk).
+const CAVE_DEPTH := 180
 
 enum Biome { OCEAN, BEACH, DESERT, PLAINS, FOREST, JUNGLE, TUNDRA, SNOW_MOUNTAIN, SWAMP, MOUNTAIN }
 
@@ -27,9 +30,11 @@ var _caves: FastNoiseLite
 var _tree_noise: FastNoiseLite
 
 func _init(world_seed: int) -> void:
-	_continent = _make_noise(world_seed + 1, FastNoiseLite.TYPE_PERLIN, 0.0025, 4)
-	_hills = _make_noise(world_seed + 2, FastNoiseLite.TYPE_SIMPLEX_SMOOTH, 0.012, 4)
-	_mountains = _make_noise(world_seed + 3, FastNoiseLite.TYPE_SIMPLEX, 0.006, 5)
+	_continent = _make_noise(world_seed + 1, FastNoiseLite.TYPE_PERLIN, 0.0020, 4)
+	_hills = _make_noise(world_seed + 2, FastNoiseLite.TYPE_SIMPLEX_SMOOTH, 0.010, 4)
+	# Low frequency so mountain massifs are ~km-wide and read as real mountains
+	# rather than spikes.
+	_mountains = _make_noise(world_seed + 3, FastNoiseLite.TYPE_SIMPLEX, 0.0009, 5)
 	_detail = _make_noise(world_seed + 4, FastNoiseLite.TYPE_PERLIN, 0.05, 3)
 	_temperature = _make_noise(world_seed + 5, FastNoiseLite.TYPE_PERLIN, 0.0015, 2)
 	_moisture = _make_noise(world_seed + 6, FastNoiseLite.TYPE_PERLIN, 0.0018, 2)
@@ -54,6 +59,8 @@ func generate_chunk(chunk: Chunk) -> void:
 			var wx := base_x + lx
 			var wz := base_z + lz
 			_generate_column(chunk, lx, lz, wx, wz)
+	# Mark which sections are fully solid so buried rock skips meshing.
+	chunk.compute_section_flags()
 
 func _generate_column(chunk: Chunk, lx: int, lz: int, wx: int, wz: int) -> void:
 	var height := _surface_height(wx, wz)
@@ -71,20 +78,21 @@ func _generate_column(chunk: Chunk, lx: int, lz: int, wx: int, wz: int) -> void:
 		_place_tree(chunk, lx, lz, height + 1)
 
 func _surface_height(wx: int, wz: int) -> int:
-	# Amplitudes are scaled up for the taller world (CHUNK_HEIGHT = 256).
+	# Amplitudes are in voxels; at VOXEL_SCALE = 0.5 m, 1700 voxels ~ 850 m of
+	# relief, so massif peaks reach roughly 1 km above the valleys.
 	# Continent shapes broad land/ocean masses in [-1, 1].
 	var continent := _continent.get_noise_2d(wx, wz)
-	# Rolling hills.
-	var hills := _hills.get_noise_2d(wx, wz) * 16.0
-	# Mountains only rise where the ridged component is positive, squared so the
-	# terrain stays mostly gentle with occasional dramatic peaks.
+	# Rolling hills give normal terrain its texture.
+	var hills := _hills.get_noise_2d(wx, wz) * 40.0
+	# Mountain massifs rise only where the low-frequency ridge is positive,
+	# squared so most of the world stays gentle with occasional huge ranges.
 	var m := _mountains.get_noise_2d(wx, wz)
 	var mountains := 0.0
 	if m > 0.0:
-		mountains = m * m * 110.0
-	var fine := _detail.get_noise_2d(wx, wz) * 3.0
+		mountains = m * m * 1700.0
+	var fine := _detail.get_noise_2d(wx, wz) * 6.0
 
-	var h := SEA_LEVEL + continent * 36.0 + hills + mountains + fine
+	var h := SEA_LEVEL + continent * 90.0 + hills + mountains + fine
 	return clampi(int(round(h)), 1, CHUNK_HEIGHT - 1)
 
 func _classify_biome(height: int, temp: float, moist: float) -> int:
@@ -92,8 +100,11 @@ func _classify_biome(height: int, temp: float, moist: float) -> int:
 		return Biome.OCEAN
 	if height <= SEA_LEVEL + 1:
 		return Biome.BEACH
-	if height > SEA_LEVEL + 80:
-		return Biome.SNOW_MOUNTAIN if temp < 0.1 else Biome.MOUNTAIN
+	if height > SEA_LEVEL + 350:
+		# High altitude is snow-capped; lower slopes are rocky mountain.
+		if height > SEA_LEVEL + 900 or temp < -0.2:
+			return Biome.SNOW_MOUNTAIN
+		return Biome.MOUNTAIN
 	if temp > 0.45:
 		return Biome.DESERT if moist < 0.0 else Biome.JUNGLE
 	if temp < -0.4:
@@ -105,8 +116,9 @@ func _classify_biome(height: int, temp: float, moist: float) -> int:
 	return Biome.PLAINS
 
 func _block_at(y: int, height: int, biome: int, wx: int, wz: int) -> int:
-	# Carve caves below the surface using 3D noise.
-	if y < height - 1 and y > 2:
+	# Carve caves only within CAVE_DEPTH of the surface. Below that the rock stays
+	# solid, so deep sections skip meshing (and generation avoids the 3D noise).
+	if y < height - 1 and y > 2 and y > height - CAVE_DEPTH:
 		if _caves.get_noise_3d(wx, y, wz) > 0.55:
 			return BlockDB.Type.AIR
 
@@ -133,7 +145,7 @@ func _surface_block(biome: int, height: int) -> int:
 		Biome.SNOW_MOUNTAIN, Biome.TUNDRA:
 			return BlockDB.Type.SNOW
 		Biome.MOUNTAIN:
-			return BlockDB.Type.STONE if height > SEA_LEVEL + 100 else BlockDB.Type.GRASS
+			return BlockDB.Type.STONE if height > SEA_LEVEL + 450 else BlockDB.Type.GRASS
 		Biome.SWAMP:
 			return BlockDB.Type.CLAY
 		_:
@@ -149,7 +161,7 @@ func _subsurface_block(biome: int) -> int:
 			return BlockDB.Type.DIRT
 
 func _should_place_tree(wx: int, wz: int, height: int, biome: int) -> bool:
-	if height <= SEA_LEVEL or height > SEA_LEVEL + 70:
+	if height <= SEA_LEVEL or height > SEA_LEVEL + 260:
 		return false
 	if biome != Biome.FOREST and biome != Biome.JUNGLE and biome != Biome.PLAINS:
 		return false

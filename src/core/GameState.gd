@@ -12,13 +12,18 @@ const DEFAULT_SEED := 1337
 
 var world_seed: int = DEFAULT_SEED
 
-## How many chunks (radius, in chunk units) to keep loaded around the player.
-## A chunk spans 16 * Chunk.VOXEL_SCALE = 8 metres, so this is ~64 m of view.
-var view_distance_chunks: int = 8
+## How many chunks (radius, in chunk units) to keep loaded at FULL detail around
+## the player. A chunk spans 16 * Chunk.VOXEL_SCALE = 8 m. Kept modest because
+## columns are now 2048 voxels tall; the LOD system extends the visible range
+## beyond this with cheap coarse chunks.
+var view_distance_chunks: int = 6
+## Additional rings (beyond view_distance_chunks) kept as lower-detail LOD chunks.
+var lod_distance_chunks: int = 18
 
-## Maximum chunk meshes to build per frame. Spreading mesh work across frames
-## keeps the main thread responsive while chunks stream in.
-var max_meshes_per_frame: int = 2
+## Maximum chunk columns to (re)mesh per frame. Building a column now means
+## meshing its handful of non-buried vertical sections plus re-culling neighbours,
+## so this is kept low to stay responsive while the tall world streams in.
+var max_meshes_per_frame: int = 1
 
 func set_seed(value: int) -> void:
 	world_seed = value
