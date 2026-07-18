@@ -1,34 +1,33 @@
 class_name Chunk
 extends RefCounted
-## Raw voxel storage for one column of the world.
+## Sparse voxel storage for one column of the world.
 ##
-## A chunk is CHUNK_SIZE x CHUNK_SIZE wide and CHUNK_HEIGHT tall. Voxels are
-## packed into a single PackedByteArray (one byte per block id) for cache-friendly
-## access and cheap serialisation. The chunk holds only data — meshing lives in
-## ChunkMesher and scene-tree nodes live in VoxelWorld — so a chunk can be created
-## and filled entirely on a background thread.
+## A column is CHUNK_SIZE x CHUNK_SIZE wide and CHUNK_HEIGHT tall, divided into
+## SECTIONS vertical sections. Each section is stored as EITHER a single block id
+## (a uniform section — all air, or all one block, costs one int) OR an 8 KB
+## PackedByteArray (a mixed section). This is what makes the 2048-tall world
+## affordable: the deep uniform rock and the empty sky above cost almost nothing,
+## and only the surface / cave / water bands allocate an array. The chunk holds
+## only data (meshing lives in ChunkMesher), so it can be filled on a worker
+## thread.
 
 const CHUNK_SIZE := 16
 ## 2048 voxels * VOXEL_SCALE (0.5 m) = a 1024 m tall world, enough for ~1 km
-## mountains. Deep solid rock is kept affordable by the "buried section" skip
-## (section_full_solid + the mesher) rather than by limiting height.
+## mountains. Sparse sections + the "buried section" skip keep it affordable.
 const CHUNK_HEIGHT := 2048
-const VOLUME := CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT
 
-## A column is meshed as a stack of vertical SECTIONS, each SECTION_H voxels
-## tall. Empty (all-air) sections build no mesh, each section is a separate
-## MeshInstance for independent frustum culling and future per-section LOD, and
-## an edit only re-meshes the section(s) it touches — the "vertical chunk
-## sections" of the roadmap. Storage stays a single column array so face culling
-## between sections is automatic.
+## A column is meshed as a stack of vertical SECTIONS, each SECTION_H voxels tall.
+## Empty sections build no mesh, each section is a separate MeshInstance for
+## independent frustum culling and LOD, and an edit only re-meshes the section(s)
+## it touches.
 const SECTION_H := 32
 ## 64 sections; this is also the max, since section flags pack into a 64-bit int.
 const SECTIONS := CHUNK_HEIGHT / SECTION_H  # 2048 / 32 = 64
+const SECTION_VOLUME := SECTION_H * CHUNK_SIZE * CHUNK_SIZE  # 8192
 
 ## Physical size of one voxel in world units (metres). Minecraft blocks are 1.0;
 ## this makes each block 0.5 — half Minecraft's size — for finer building detail.
-## Greedy meshing (ChunkMesher) keeps the extra block density cheap. Change this
-## one constant to rescale the whole world; everything else derives from it.
+## Change this one constant to rescale the whole world; everything derives from it.
 const VOXEL_SCALE := 0.5
 
 ## Converts world-space metres to integer voxel coordinates.
@@ -42,55 +41,76 @@ static func voxel_center(v: Vector3i) -> Vector3:
 ## Chunk grid coordinates (world position = coord * CHUNK_SIZE).
 var cx: int
 var cz: int
-var voxels: PackedByteArray
 
-## Set true once the mesh/collision for this chunk is dirty and needs rebuilding.
-var dirty: bool = false
+# One entry per section: an int (uniform block id) or a PackedByteArray (mixed).
+var _sections: Array = []
 
-# Bit `s` is set once section `s` has had any non-air block written, so empty
-# sections can skip meshing entirely. Digging never clears a bit (a since-emptied
-# section just meshes to null once); that's a negligible, self-correcting cost.
+# Bit `s` set once section `s` has any non-air block — worth meshing.
 var _section_nonair: int = 0
-
-# Bit `s` set when section `s` is entirely solid blocks. Combined with its
-# neighbours (VoxelWorld), a fully-solid section surrounded by fully-solid
-# sections has no visible faces and is skipped — this is what makes a 2048-tall
-# world of mostly-buried rock affordable. Computed once after generation; digging
-# clears the bit so the section re-meshes.
+# Bit `s` set when section `s` is entirely solid — combined with its neighbours
+# (VoxelWorld) it can be skipped as fully buried. Digging clears the bit.
 var _section_full: int = 0
 
 func _init(p_cx: int, p_cz: int) -> void:
 	cx = p_cx
 	cz = p_cz
-	voxels = PackedByteArray()
-	voxels.resize(VOLUME)  # PackedByteArray initialises to zero == AIR
-
-static func index(lx: int, ly: int, lz: int) -> int:
-	return lx + lz * CHUNK_SIZE + ly * CHUNK_SIZE * CHUNK_SIZE
+	_sections.resize(SECTIONS)
+	for i in SECTIONS:
+		_sections[i] = BlockDB.Type.AIR  # uniform air
 
 static func in_bounds(lx: int, ly: int, lz: int) -> bool:
 	return lx >= 0 and lx < CHUNK_SIZE \
 		and lz >= 0 and lz < CHUNK_SIZE \
 		and ly >= 0 and ly < CHUNK_HEIGHT
 
+## Index of a voxel within its section's byte array.
+static func _local_index(lx: int, ly: int, lz: int) -> int:
+	return lx + lz * CHUNK_SIZE + (ly % SECTION_H) * CHUNK_SIZE * CHUNK_SIZE
+
 func get_local(lx: int, ly: int, lz: int) -> int:
 	if not in_bounds(lx, ly, lz):
 		return BlockDB.Type.AIR
-	return voxels[index(lx, ly, lz)]
+	@warning_ignore("integer_division")
+	var s = _sections[ly / SECTION_H]
+	if typeof(s) == TYPE_INT:
+		return s
+	return s[_local_index(lx, ly, lz)]
 
 func set_local(lx: int, ly: int, lz: int, id: int) -> void:
 	if not in_bounds(lx, ly, lz):
 		return
-	voxels[index(lx, ly, lz)] = id
 	@warning_ignore("integer_division")
 	var sec := ly / SECTION_H
+	var li := _local_index(lx, ly, lz)
+	var s = _sections[sec]
+	if typeof(s) == TYPE_INT:
+		if s == id:
+			return  # no change to a uniform section
+		# Materialise the uniform section into a mutable array (local => in-place).
+		var arr := PackedByteArray()
+		arr.resize(SECTION_VOLUME)
+		arr.fill(s)
+		arr[li] = id
+		_sections[sec] = arr
+	else:
+		# PackedByteArray is copy-on-write; drop the container's reference so the
+		# write happens in place instead of copying all 8 KB per block.
+		_sections[sec] = 0
+		s[li] = id
+		_sections[sec] = s
 	if id != BlockDB.Type.AIR:
 		_section_nonair |= 1 << sec
 	else:
-		# Digging punches a hole, so the section is no longer fully solid.
-		_section_full &= ~(1 << sec)
+		_section_full &= ~(1 << sec)  # dug a hole -> no longer fully solid
 
-## True if section `sec` has ever had a non-air block (so it's worth meshing).
+## Sets a whole section to a single block without allocating an array. Used by
+## generation for the deep uniform rock and the empty sky.
+func set_section_uniform(sec: int, id: int) -> void:
+	_sections[sec] = id
+	if id != BlockDB.Type.AIR:
+		_section_nonair |= 1 << sec
+
+## True if section `sec` has any non-air block (so it's worth meshing).
 func section_has_content(sec: int) -> bool:
 	return (_section_nonair & (1 << sec)) != 0
 
@@ -98,22 +118,38 @@ func section_has_content(sec: int) -> bool:
 func section_full_solid(sec: int) -> bool:
 	return (_section_full & (1 << sec)) != 0
 
-## Recomputes the fully-solid flags. Call once after generation fills the column
-## (safe on a worker thread — reads only the block registry).
+## Recomputes the content/solid flags from the section data. Call once after
+## generation (safe on a worker thread — reads only the block registry).
 func compute_section_flags() -> void:
+	_section_nonair = 0
 	_section_full = 0
-	var vol := SECTION_H * CHUNK_SIZE * CHUNK_SIZE
 	for sec in SECTIONS:
-		if not section_has_content(sec):
-			continue  # all air -> not solid
-		var start := sec * SECTION_H * CHUNK_SIZE * CHUNK_SIZE
-		var full := true
-		for i in vol:
-			if not BlockDB.is_solid(voxels[start + i]):
-				full = false
-				break
-		if full:
-			_section_full |= 1 << sec
+		var s = _sections[sec]
+		if typeof(s) == TYPE_INT:
+			if s != BlockDB.Type.AIR:
+				_section_nonair |= 1 << sec
+			if BlockDB.is_solid(s):
+				_section_full |= 1 << sec
+		else:
+			var nonair := false
+			var full := true
+			var uniform := true
+			var first: int = s[0]
+			for i in SECTION_VOLUME:
+				var b: int = s[i]
+				if b != BlockDB.Type.AIR:
+					nonair = true
+				if not BlockDB.is_solid(b):
+					full = false
+				if b != first:
+					uniform = false
+			if nonair:
+				_section_nonair |= 1 << sec
+			if full:
+				_section_full |= 1 << sec
+			# A section that ended up all one block collapses back to an int.
+			if uniform:
+				_sections[sec] = first
 
 func world_origin() -> Vector3:
 	return Vector3(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE)

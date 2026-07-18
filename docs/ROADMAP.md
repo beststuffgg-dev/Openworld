@@ -37,10 +37,13 @@ Make the core scale and look better before piling gameplay on it.
       coarse (1/2, 1/4 resolution) mesh, re-meshed as their LOD band changes with
       the player. Reduces the geometry cost of the outer rings; minor cracks at
       LOD boundaries are an accepted first pass (skirts/stitching later).
-- ⬜ **Sparse / uniform-section storage** — the real blocker for a far, km-scale
-      view: deep uniform rock currently costs 512 KB per column, capping how many
-      columns can be loaded. Store all-one-block sections as a single id so tall
-      columns are cheap, then LOD radius (and view distance) can grow.
+- ✅ **Sparse / uniform-section storage** — each vertical section is stored as a
+      single block id (uniform: deep rock, empty sky) or an 8 KB array (mixed:
+      surface/caves/water). A 2048-tall column dropped from ~512 KB to ~50-80 KB,
+      generation got ~10x cheaper (uniform sections are O(1)), and view/LOD radius
+      grew (6 / 12). Runtime edits mutate in place (copy-on-write safe).
+- ⬜ **Further view distance / greedy LOD stitching** — with cheap columns the
+      remaining limits are generation/mesh throughput and LOD-boundary cracks.
 - 🟡 **Texture atlas** with per-block 16×16 tiles + an in-game pixel **Texture
       Editor** (F1) that saves PNGs picked up live by the atlas. PBR maps,
       connected textures and a bevelled-edge shader still to come.

@@ -50,32 +50,68 @@ static func _make_noise(seed: int, type: int, frequency: float, octaves: int) ->
 	n.fractal_octaves = octaves
 	return n
 
-## Fills `chunk.voxels` for the chunk at grid coordinate (cx, cz).
+## Vertical margin above the tallest column kept as mixed sections so tree tops
+## are not lost to a uniform-air section.
+const TREE_MARGIN := 16
+
+## Fills `chunk` for grid coordinate (cx, cz). Deep rock and empty sky are set as
+## uniform sections (no allocation); only the surface / cave / water band is
+## filled per-voxel — this is what keeps the tall column's memory small.
 func generate_chunk(chunk: Chunk) -> void:
 	var base_x := chunk.cx * CHUNK_SIZE
 	var base_z := chunk.cz * CHUNK_SIZE
+
+	# 1. Heightmap + biome for every column, and the chunk's height range.
+	var heights := PackedInt32Array()
+	var biomes := PackedInt32Array()
+	heights.resize(CHUNK_SIZE * CHUNK_SIZE)
+	biomes.resize(CHUNK_SIZE * CHUNK_SIZE)
+	var min_h := CHUNK_HEIGHT
+	var max_h := 0
 	for lz in CHUNK_SIZE:
 		for lx in CHUNK_SIZE:
 			var wx := base_x + lx
 			var wz := base_z + lz
-			_generate_column(chunk, lx, lz, wx, wz)
-	# Mark which sections are fully solid so buried rock skips meshing.
+			var h := _surface_height(wx, wz)
+			var idx := lx + lz * CHUNK_SIZE
+			heights[idx] = h
+			biomes[idx] = _classify_biome(h, _temperature.get_noise_2d(wx, wz), _moisture.get_noise_2d(wx, wz))
+			min_h = mini(min_h, h)
+			max_h = maxi(max_h, h)
+
+	# 2. Fill each section: uniform deep rock, uniform sky, or per-voxel band.
+	for sec in Chunk.SECTIONS:
+		var y_lo := sec * Chunk.SECTION_H
+		var y_hi := y_lo + Chunk.SECTION_H
+		if y_hi - 1 <= min_h - CAVE_DEPTH:
+			chunk.set_section_uniform(sec, BlockDB.Type.STONE)  # all below caves
+		elif y_lo > max_h + TREE_MARGIN and y_lo > SEA_LEVEL:
+			pass  # uniform air (the default), nothing to write
+		else:
+			_fill_section(chunk, base_x, base_z, heights, biomes, y_lo, y_hi)
+
+	# 3. Trees on suitable land (writes into the already-filled surface sections).
+	for lz in CHUNK_SIZE:
+		for lx in CHUNK_SIZE:
+			var idx := lx + lz * CHUNK_SIZE
+			if _should_place_tree(base_x + lx, base_z + lz, heights[idx], biomes[idx]):
+				_place_tree(chunk, lx, lz, heights[idx] + 1)
+
+	# Mark section content/solid flags (also collapses uniform sections).
 	chunk.compute_section_flags()
 
-func _generate_column(chunk: Chunk, lx: int, lz: int, wx: int, wz: int) -> void:
-	var height := _surface_height(wx, wz)
-	var temp := _temperature.get_noise_2d(wx, wz)      # -1 (cold) .. 1 (hot)
-	var moist := _moisture.get_noise_2d(wx, wz)        # -1 (dry) .. 1 (wet)
-	var biome := _classify_biome(height, temp, moist)
-
-	for y in CHUNK_HEIGHT:
-		var block := _block_at(y, height, biome, wx, wz)
-		if block != BlockDB.Type.AIR:
-			chunk.set_local(lx, y, lz, block)
-
-	# Sparse trees on suitable land above sea level.
-	if _should_place_tree(wx, wz, height, biome):
-		_place_tree(chunk, lx, lz, height + 1)
+func _fill_section(chunk: Chunk, base_x: int, base_z: int, heights: PackedInt32Array, biomes: PackedInt32Array, y_lo: int, y_hi: int) -> void:
+	for lz in CHUNK_SIZE:
+		for lx in CHUNK_SIZE:
+			var idx := lx + lz * CHUNK_SIZE
+			var wx := base_x + lx
+			var wz := base_z + lz
+			var h := heights[idx]
+			var biome := biomes[idx]
+			for y in range(y_lo, y_hi):
+				var block := _block_at(y, h, biome, wx, wz)
+				if block != BlockDB.Type.AIR:
+					chunk.set_local(lx, y, lz, block)
 
 func _surface_height(wx: int, wz: int) -> int:
 	# Amplitudes are in voxels; at VOXEL_SCALE = 0.5 m, 1700 voxels ~ 850 m of
