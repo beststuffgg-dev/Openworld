@@ -60,6 +60,13 @@ scene files to merge.
   less-blocky read, plus a translucent water surface.
 - **Mine & build** any block, with correct chunk-seam remeshing.
 - **Day/night cycle** with a moving sun, warm sunrises and darkening nights.
+- **Seasons** — Spring/Summer/Autumn/Winter recolour grass and leaves live
+  through a shader uniform (no remesh), on the same clock as day/night.
+- **Wildlife** — procedurally-built chickens (skittish), cows (passive) and
+  bulls (charge when you get close), spawned around you by a season-aware
+  spawner, with **seasonal migration** when the season turns.
+- **Per-vertex colour variation** to break up flat terrain, plus a terrain
+  shader ready for the block texture system.
 
 ## Project layout
 
@@ -74,10 +81,17 @@ src/
     BlockRegistry.gd     Block types & properties (autoload: BlockDB)
     Chunk.gd             Raw voxel storage
     TerrainGenerator.gd  Noise-based terrain + biomes + trees (thread-safe)
-    ChunkMesher.gd       Culled meshing + ambient occlusion
+    ChunkMesher.gd       Culled meshing + ambient occlusion + tint UVs
     VoxelWorld.gd        Chunk streaming, collision, block editing
+    voxel_terrain.gdshader  Opaque terrain shader (per-vertex + season tint)
   player/Player.gd       First-person controller + block interaction
-  environment/DayNightCycle.gd
+  entities/
+    Animal.gd            Base wildlife AI (wander/flee/charge/migrate)
+    Chicken.gd Cow.gd Bull.gd   Species (procedural box models)
+    MobSpawner.gd        Season-aware spawn/despawn + migration
+  environment/
+    DayNightCycle.gd     Sun + sky over a 24h cycle
+    SeasonManager.gd     Seasons + live foliage tinting
   ui/HUD.gd
 docs/                    Architecture, design vision, roadmap
 ```

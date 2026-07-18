@@ -11,10 +11,12 @@ var _selected: Label
 
 var _player: Player
 var _cycle: DayNightCycle
+var _seasons: SeasonManager
 
-func setup(player: Player, cycle: DayNightCycle) -> void:
+func setup(player: Player, cycle: DayNightCycle, seasons: SeasonManager = null) -> void:
 	_player = player
 	_cycle = cycle
+	_seasons = seasons
 	_player.selection_changed.connect(_on_selection_changed)
 
 func _ready() -> void:
@@ -48,7 +50,10 @@ func _process(_delta: float) -> void:
 		var h := int(_cycle.time_of_day)
 		var m := int((_cycle.time_of_day - h) * 60.0)
 		clock = "  %02d:%02d" % [h, m]
-	_info.text = "XYZ  %d, %d, %d%s" % [int(p.x), int(p.y), int(p.z), clock]
+	var season := ""
+	if _seasons:
+		season = "  %s" % _seasons.season_name()
+	_info.text = "XYZ  %d, %d, %d%s%s" % [int(p.x), int(p.y), int(p.z), clock, season]
 	if _selected.text == "":
 		_on_selection_changed(_player.selected_block())
 

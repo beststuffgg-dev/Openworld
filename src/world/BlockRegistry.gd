@@ -55,7 +55,9 @@ func _ready() -> void:
 	_register(Type.SAND,   "Sand",   Color(0.83, 0.77, 0.55),      true,  false)
 	_register(Type.WATER,  "Water",  Color(0.20, 0.40, 0.70, 0.6), true,  true)
 	_register(Type.WOOD,   "Wood",   Color(0.36, 0.25, 0.15),      true,  false)
-	_register(Type.LEAVES, "Leaves", Color(0.24, 0.45, 0.20),      true,  true)
+	# Leaves are opaque (fast-graphics style) so they cull cleanly and can take
+	# the seasonal grass/leaf tint from the terrain shader.
+	_register(Type.LEAVES, "Leaves", Color(0.24, 0.45, 0.20),      true,  false)
 	_register(Type.SNOW,   "Snow",   Color(0.92, 0.94, 0.97),      true,  false)
 	_register(Type.GRAVEL, "Gravel", Color(0.42, 0.40, 0.38),      true,  false)
 	_register(Type.CLAY,   "Clay",   Color(0.58, 0.60, 0.63),      true,  false)
@@ -81,3 +83,8 @@ func get_color(id: int) -> Color:
 
 func get_name(id: int) -> String:
 	return get_block(id).name
+
+## Blocks whose colour follows the season (grass & foliage). The terrain shader
+## tints these via a per-vertex weight.
+func is_tintable(id: int) -> bool:
+	return id == Type.GRASS or id == Type.LEAVES

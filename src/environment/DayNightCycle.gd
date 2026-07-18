@@ -15,6 +15,8 @@ extends Node
 var _sun: DirectionalLight3D
 var _env: Environment
 var time_of_day: float  # hours, 0..24
+## Total in-game days elapsed since start (fractional). Seasons key off this.
+var elapsed_days: float = 0.0
 
 signal hour_changed(hour: float)
 
@@ -26,7 +28,9 @@ func setup(sun: DirectionalLight3D, env: Environment) -> void:
 func _process(delta: float) -> void:
 	if _sun == null:
 		return
-	time_of_day = fmod(time_of_day + (delta / day_length) * 24.0, 24.0)
+	var day_delta := delta / day_length
+	elapsed_days += day_delta
+	time_of_day = fmod(time_of_day + day_delta * 24.0, 24.0)
 	_apply()
 	hour_changed.emit(time_of_day)
 

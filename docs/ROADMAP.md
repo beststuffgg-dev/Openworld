@@ -50,10 +50,12 @@ Make the core scale and look better before piling gameplay on it.
 - ⬜ Combat (melee, bows, magic, shields, dodge), status effects
 - ⬜ Creative mode (flight, unlimited blocks, no damage, blueprint copy/paste)
 
-## Phase 4 — Environment & atmosphere ⬜
+## Phase 4 — Environment & atmosphere 🟡
 
 - ⬜ Weather system (rain, storms, snow, fog, wind) affecting gameplay
-- ⬜ Seasons (visual + crop + migration effects)
+- 🟡 Seasons — live foliage recolour (Spring/Summer/Autumn/Winter) via a shader
+      season uniform, no remesh; drives animal migration. Crop/temperature
+      effects still to come.
 - ⬜ Volumetric clouds & fog, god rays, aurora, stars/Milky Way, moon phases
 - ⬜ Water caustics, rain splashes, snow accumulation, wet terrain, puddles
 - ⬜ Global illumination / SSR / SSGI tuning per quality tier
@@ -62,7 +64,9 @@ Make the core scale and look better before piling gameplay on it.
 
 - ⬜ NPC agents with schedules (eat/sleep/work/trade/socialise/shelter)
 - ⬜ Village simulation (jobs, buildings, defence, repair, reputation)
-- ⬜ Animals: peaceful/neutral/hostile, taming, mounts, pack animals
+- 🟡 Animals — chickens (skittish), cows (passive) and bulls (charge the player)
+      with a wander/flee/charge state machine, seasonal migration, and a
+      season-aware spawner. Taming, mounts, pack animals and breeding still to come.
 - ⬜ Quest system (exploration/build/combat/gather/craft/trade/story/daily)
 - ⬜ Dialogue, lore books, main storyline + branches, bosses, multiple endings
 

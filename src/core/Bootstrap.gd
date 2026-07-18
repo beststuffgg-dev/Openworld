@@ -11,12 +11,15 @@ const SPAWN_XZ := Vector2(8, 8)
 var _world: VoxelWorld
 var _player: Player
 var _cycle: DayNightCycle
+var _seasons: SeasonManager
+var _spawner: MobSpawner
 var _spawned := false
 
 func _ready() -> void:
 	_setup_environment()
 	_setup_world()
 	_setup_player()
+	_setup_seasons_and_mobs()
 	_setup_ui()
 	print("[Project Horizons] Vertical slice booted. Seed: %d" % GameState.world_seed)
 
@@ -69,11 +72,22 @@ func _setup_player() -> void:
 	add_child(_player)
 	_world.set_track_target(_player)
 
+func _setup_seasons_and_mobs() -> void:
+	_seasons = SeasonManager.new()
+	_seasons.name = "SeasonManager"
+	add_child(_seasons)
+	_seasons.setup(_cycle)
+
+	_spawner = MobSpawner.new()
+	_spawner.name = "MobSpawner"
+	add_child(_spawner)
+	_spawner.setup(_world, _player, _seasons)
+
 func _setup_ui() -> void:
 	var hud := HUD.new()
 	hud.name = "HUD"
 	add_child(hud)
-	hud.setup(_player, _cycle)
+	hud.setup(_player, _cycle, _seasons)
 
 func _process(_delta: float) -> void:
 	if not _spawned:
