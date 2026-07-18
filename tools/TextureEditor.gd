@@ -70,7 +70,7 @@ func _build_block_list() -> Control:
 	for id in BlockDB.count():
 		if id == BlockDB.Type.AIR or BlockDB.is_transparent(id):
 			continue
-		list.add_item(BlockDB.get_name(id))
+		list.add_item(BlockDB.block_name(id))
 		_block_ids.append(id)
 	list.item_selected.connect(func(index): _load_block(_block_ids[index]))
 	panel.add_child(list)
@@ -156,7 +156,7 @@ func _load_block(id: int, force_color: bool = false) -> void:
 		_image = Textures.load_block_image(id)
 	_canvas.setup(_image, TILE, CANVAS_PX)
 	if _status:
-		_status.text = "Editing: %s" % BlockDB.get_name(id)
+		_status.text = "Editing: %s" % BlockDB.block_name(id)
 
 func _paint_cell(x: int, y: int) -> void:
 	_image.set_pixel(x, y, Color(0, 0, 0, 0) if _erasing else _color)
@@ -192,7 +192,7 @@ func _reset_to_block_color() -> void:
 
 func _save() -> void:
 	Textures.ensure_user_dir()
-	var path := Textures.user_texture_path(BlockDB.get_name(_current_id))
+	var path := Textures.user_texture_path(BlockDB.block_name(_current_id))
 	var err := _image.save_png(path)
 	if err == OK:
 		Textures.rebuild()

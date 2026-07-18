@@ -84,7 +84,7 @@ func is_transparent(id: int) -> bool:
 func get_color(id: int) -> Color:
 	return get_block(id).color
 
-func get_name(id: int) -> String:
+func block_name(id: int) -> String:
 	return get_block(id).name
 
 ## Blocks whose colour follows the season (grass & foliage). The terrain shader

@@ -124,4 +124,4 @@ func _refresh_selected() -> void:
 		return
 	var n := _player.brush_size
 	var brush := "" if n <= 1 else "   Brush: %d³" % n
-	_selected.text = "Block:  %s  (scroll)%s" % [BlockDB.get_name(_player.selected_block()), brush]
+	_selected.text = "Block:  %s  (scroll)%s" % [BlockDB.block_name(_player.selected_block()), brush]

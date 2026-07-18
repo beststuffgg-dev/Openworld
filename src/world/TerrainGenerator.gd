@@ -28,6 +28,7 @@ var _temperature: FastNoiseLite
 var _moisture: FastNoiseLite
 var _caves: FastNoiseLite
 var _tree_noise: FastNoiseLite
+var _structures: StructureGenerator
 
 func _init(world_seed: int) -> void:
 	_continent = _make_noise(world_seed + 1, FastNoiseLite.TYPE_PERLIN, 0.0020, 4)
@@ -40,6 +41,7 @@ func _init(world_seed: int) -> void:
 	_moisture = _make_noise(world_seed + 6, FastNoiseLite.TYPE_PERLIN, 0.0018, 2)
 	_caves = _make_noise(world_seed + 7, FastNoiseLite.TYPE_PERLIN, 0.045, 2)
 	_tree_noise = _make_noise(world_seed + 8, FastNoiseLite.TYPE_VALUE, 1.0, 1)
+	_structures = StructureGenerator.new(world_seed, _surface_height, SEA_LEVEL)
 
 static func _make_noise(seed: int, type: int, frequency: float, octaves: int) -> FastNoiseLite:
 	var n := FastNoiseLite.new()
@@ -96,6 +98,9 @@ func generate_chunk(chunk: Chunk) -> void:
 			var idx := lx + lz * CHUNK_SIZE
 			if _should_place_tree(base_x + lx, base_z + lz, heights[idx], biomes[idx]):
 				_place_tree(chunk, lx, lz, heights[idx] + 1)
+
+	# 4. Abandoned structures (houses, towers, ruins) overlapping this chunk.
+	_structures.stamp_chunk(chunk, base_x, base_z)
 
 	# Mark section content/solid flags (also collapses uniform sections).
 	chunk.compute_section_flags()

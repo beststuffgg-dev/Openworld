@@ -48,7 +48,7 @@ func rebuild() -> void:
 		var row := id / COLS
 		var ox := col * TILE
 		var oy := row * TILE
-		var tile := _load_tile_image(BlockDB.get_name(id).to_lower())
+		var tile := _load_tile_image(BlockDB.block_name(id).to_lower())
 		if tile == null:
 			img.fill_rect(Rect2i(ox, oy, TILE, TILE), BlockDB.get_color(id))
 		else:
@@ -87,7 +87,7 @@ func _normalize(im: Image) -> Image:
 ## Current image for a block for editing: its texture if present, else a solid
 ## tile of the block's colour. Always a 16x16 RGBA8 image.
 func load_block_image(block_id: int) -> Image:
-	var tile := _load_tile_image(BlockDB.get_name(block_id).to_lower())
+	var tile := _load_tile_image(BlockDB.block_name(block_id).to_lower())
 	if tile == null:
 		tile = Image.create(TILE, TILE, false, Image.FORMAT_RGBA8)
 		tile.fill(BlockDB.get_color(block_id))
