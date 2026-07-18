@@ -20,11 +20,14 @@ The playable voxel slice everything else builds on.
 - ✅ First-person controller, mine/place, chunk-seam remeshing
 - ✅ Day/night cycle with dynamic sun & sky
 
-## Phase 1 — Voxel engine hardening ⬜
+## Phase 1 — Voxel engine hardening 🟡
 
 Make the core scale and look better before piling gameplay on it.
 
-- ⬜ **Greedy meshing** (merge coplanar quads) — big vertex-count win
+- ✅ **Greedy meshing** (merge coplanar same-block quads) — big vertex-count win;
+      SSAO now provides edge shading, per-voxel variation moved to the shader.
+- ✅ **Configurable voxel scale** — blocks are 0.5 m (`Chunk.VOXEL_SCALE`), with
+      an NxNxN bulk build/dig brush (up to 32³) via single-remesh edits.
 - ⬜ **Vertical chunk sections** (stacked 16³) for taller worlds & true 3D LOD
 - ⬜ **Chunk LOD** + distance-based mesh simplification
 - 🟡 **Texture atlas** with per-block 16×16 tiles + an in-game pixel **Texture
@@ -78,9 +81,10 @@ Make the core scale and look better before piling gameplay on it.
 
 ## Phase 6 — UI, input & platforms ⬜
 
-- ⬜ Responsive modern UI (phone/tablet/Steam Deck/PC)
-- ⬜ Full settings menus (graphics tiers, audio, gameplay, controls, accessibility)
-- ⬜ Remappable keyboard/mouse/controller; touch controls; gyro aim (mobile)
+- 🟡 Responsive UI — HUD + a pause/Settings overlay (Esc) housing the Texture
+      Editor and brush control. Full graphics/audio/accessibility menus to come.
+- 🟡 Touch controls — device-detected on-screen joystick + look + action buttons.
+      Remappable bindings, controller support and gyro aim still to come.
 - ⬜ Accessibility: subtitles, UI scaling, colorblind, reduced motion, screen reader
 - ⬜ Mobile optimisation: dynamic resolution, battery saver, 30/60 FPS targets
 - ⬜ Android / iOS / Windows export presets & CI

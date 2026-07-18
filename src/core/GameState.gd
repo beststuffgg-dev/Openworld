@@ -13,6 +13,7 @@ const DEFAULT_SEED := 1337
 var world_seed: int = DEFAULT_SEED
 
 ## How many chunks (radius, in chunk units) to keep loaded around the player.
+## A chunk spans 16 * Chunk.VOXEL_SCALE = 8 metres, so this is ~64 m of view.
 var view_distance_chunks: int = 8
 
 ## Maximum chunk meshes to build per frame. Spreading mesh work across frames

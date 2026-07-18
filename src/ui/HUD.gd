@@ -105,8 +105,7 @@ func _process(_delta: float) -> void:
 	if _weather:
 		weather = "  %s" % _weather.weather_name()
 	_info.text = "XYZ  %d, %d, %d%s%s%s" % [int(p.x), int(p.y), int(p.z), clock, season, weather]
-	if _selected.text == "":
-		_on_selection_changed(_player.selected_block())
+	_refresh_selected()
 
 	if _player.stats:
 		_health_fill.size.x = BAR_WIDTH * _player.stats.health_ratio()
@@ -114,4 +113,11 @@ func _process(_delta: float) -> void:
 		_stamina_fill.size.x = BAR_WIDTH * _player.stats.stamina_ratio()
 
 func _on_selection_changed(block_id: int) -> void:
-	_selected.text = "Block:  %s  (scroll to change)" % BlockDB.get_name(block_id)
+	_refresh_selected()
+
+func _refresh_selected() -> void:
+	if _player == null:
+		return
+	var n := _player.brush_size
+	var brush := "" if n <= 1 else "   Brush: %d³" % n
+	_selected.text = "Block:  %s  (scroll)%s" % [BlockDB.get_name(_player.selected_block()), brush]

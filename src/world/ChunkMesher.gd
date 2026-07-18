@@ -1,67 +1,38 @@
 class_name ChunkMesher
 extends RefCounted
-## Builds a renderable ArrayMesh from a chunk's voxels using culled meshing.
+## Builds a renderable ArrayMesh from a chunk's voxels using GREEDY meshing.
 ##
-## Only faces that border a transparent block are emitted, so the interior of the
-## terrain costs nothing. Each vertex carries:
-##   - COLOR: the block colour, slightly varied per block to break up flatness,
-##            with ambient occlusion (the classic 0..3 solid-neighbour method)
-##            multiplied in to soften edges and give the less-blocky read.
-##   - UV.x:  a seasonal tint weight (1 for grass/leaves, 0 otherwise) that the
-##            terrain shader uses to recolour foliage per season with no remesh.
+## For each of the three axes it sweeps the chunk in slices, builds a mask of the
+## visible faces on that plane, then merges coplanar faces of the same block into
+## the largest possible rectangles. This collapses a flat field of thousands of
+## unit quads into a handful of big ones — essential now that blocks are small
+## (see Chunk.VOXEL_SCALE), where a naive mesher would emit ~64x the geometry.
 ##
-## Neighbour lookups cross chunk borders via the `sampler` callable so faces at
-## chunk seams cull correctly. The mesher never touches the scene tree, so it is
-## safe to call from a worker thread.
+## Attributes per vertex:
+##   - UV:   tiling coordinates 0..w / 0..h so a merged quad repeats the block
+##           texture instead of stretching it.
+##   - UV2:  the block's atlas tile origin (constant per quad).
+##   - COLOR.a: seasonal tint weight (1 for grass/leaves, else 0).
+## Ambient occlusion is provided by the environment's SSAO rather than baked into
+## vertices (baked AO would prevent merging); per-voxel colour variation is done
+## in the shader from world position. The mesher never touches the scene tree, so
+## it is safe on a worker thread.
 
-const CHUNK_SIZE := Chunk.CHUNK_SIZE
-const CHUNK_HEIGHT := Chunk.CHUNK_HEIGHT
+const CS := Chunk.CHUNK_SIZE
+const CH := Chunk.CHUNK_HEIGHT
 
-# Face definitions: outward normal + the neighbour direction to test for culling.
-const FACES := {
-	"top":    {"normal": Vector3(0, 1, 0),  "dir": Vector3i(0, 1, 0)},
-	"bottom": {"normal": Vector3(0, -1, 0), "dir": Vector3i(0, -1, 0)},
-	"north":  {"normal": Vector3(0, 0, -1), "dir": Vector3i(0, 0, -1)},
-	"south":  {"normal": Vector3(0, 0, 1),  "dir": Vector3i(0, 0, 1)},
-	"west":   {"normal": Vector3(-1, 0, 0), "dir": Vector3i(-1, 0, 0)},
-	"east":   {"normal": Vector3(1, 0, 0),  "dir": Vector3i(1, 0, 0)},
-}
-
-# Atlas-tile UV for each of the four face corners (matches FACE_VERTS order).
-const UV_CORNERS := [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
-
-# Corner vertex offsets per face (unit cube, CCW when viewed from outside so the
-# generated winding is front-facing under the default back-face culling).
-const FACE_VERTS := {
-	"top":    [Vector3(0, 1, 1), Vector3(1, 1, 1), Vector3(1, 1, 0), Vector3(0, 1, 0)],
-	"bottom": [Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 1), Vector3(0, 0, 1)],
-	"north":  [Vector3(1, 0, 0), Vector3(0, 0, 0), Vector3(0, 1, 0), Vector3(1, 1, 0)],
-	"south":  [Vector3(0, 0, 1), Vector3(1, 0, 1), Vector3(1, 1, 1), Vector3(0, 1, 1)],
-	"west":   [Vector3(0, 0, 0), Vector3(0, 0, 1), Vector3(0, 1, 1), Vector3(0, 1, 0)],
-	"east":   [Vector3(1, 0, 1), Vector3(1, 0, 0), Vector3(1, 1, 0), Vector3(1, 1, 1)],
-}
-
-## Builds an ArrayMesh for `chunk`. `sampler` is a Callable(gx, gy, gz) -> int id
-## in world coordinates, used to read across chunk boundaries.
-## Returns null when the chunk would produce no geometry.
+## Builds an ArrayMesh for `chunk`. `sampler` is Callable(gx, gy, gz) -> int id in
+## world voxel coordinates, used to read across chunk borders. Returns null when
+## the chunk would produce no geometry.
 static func build(chunk: Chunk, sampler: Callable) -> ArrayMesh:
-	# Opaque and translucent (water) surfaces go into separate arrays so water
-	# can use its own material.
 	var opaque := SurfaceArrays.new()
 	var fluid := SurfaceArrays.new()
-	var base_x := chunk.cx * CHUNK_SIZE
-	var base_z := chunk.cz * CHUNK_SIZE
+	var base_x := chunk.cx * CS
+	var base_z := chunk.cz * CS
+	var dims := [CS, CH, CS]
 
-	for ly in CHUNK_HEIGHT:
-		for lz in CHUNK_SIZE:
-			for lx in CHUNK_SIZE:
-				var id := chunk.voxels[Chunk.index(lx, ly, lz)]
-				if id == BlockDB.Type.AIR:
-					continue
-				var gx := base_x + lx
-				var gz := base_z + lz
-				var target := fluid if BlockDB.is_transparent(id) else opaque
-				_emit_block(target, id, lx, ly, lz, gx, gz, sampler)
+	for d in 3:
+		_greedy_axis(chunk, sampler, base_x, base_z, dims, d, opaque, fluid)
 
 	if opaque.positions.is_empty() and fluid.positions.is_empty():
 		return null
@@ -75,96 +46,152 @@ static func build(chunk: Chunk, sampler: Callable) -> ArrayMesh:
 		mesh.surface_set_material(mesh.get_surface_count() - 1, _fluid_material())
 	return mesh
 
-static func _emit_block(sa: SurfaceArrays, id: int, lx: int, ly: int, lz: int, gx: int, gz: int, sampler: Callable) -> void:
-	var is_fluid := BlockDB.is_transparent(id)
-	# Slight per-block brightness variation breaks up large flat expanses.
-	var variation := 0.9 + 0.1 * _hash01(gx, ly, gz)
-	var tint_weight := 1.0 if BlockDB.is_tintable(id) else 0.0
-	# Water is drawn with its own vertex-colour material, so it keeps the block
-	# colour in COLOR; opaque blocks take their colour from the atlas texture and
-	# put only the shade factor in COLOR.
-	var c := BlockDB.get_color(id)
-	var fluid_color := Color(c.r * variation, c.g * variation, c.b * variation, c.a)
-	var uv_rect := Textures.uv_rect(id)
+# --- Greedy meshing --------------------------------------------------------
 
-	for face in FACES:
-		var dir: Vector3i = FACES[face]["dir"]
-		var neighbor := int(sampler.call(gx + dir.x, ly + dir.y, gz + dir.z))
-		# Emit the face only if the neighbour doesn't hide it. Solid neighbours
-		# cull; a transparent block hides a face only from another block of the
-		# same type (so a water surface stays single-sided).
-		if BlockDB.is_solid(neighbor):
-			continue
-		if neighbor == id:
-			continue
-		_emit_face(sa, face, is_fluid, fluid_color, variation, tint_weight, uv_rect, gx, ly, gz, lx, lz, sampler)
+static func _greedy_axis(chunk: Chunk, sampler: Callable, base_x: int, base_z: int, dims: Array, d: int, opaque: SurfaceArrays, fluid: SurfaceArrays) -> void:
+	var u := (d + 1) % 3
+	var v := (d + 2) % 3
+	var du: int = dims[u]
+	var dv: int = dims[v]
 
-static func _emit_face(sa: SurfaceArrays, face: String, is_fluid: bool, fluid_color: Color, variation: float, tint_weight: float, uv_rect: Rect2, gx: int, ly: int, gz: int, lx: int, lz: int, sampler: Callable) -> void:
-	var normal: Vector3 = FACES[face]["normal"]
-	var corners: Array = FACE_VERTS[face]
-	var origin := Vector3(lx, ly, lz)
+	var mask_op := PackedInt32Array()
+	var mask_fl := PackedInt32Array()
+	mask_op.resize(du * dv)
+	mask_fl.resize(du * dv)
+
+	for slice in range(-1, dims[d]):
+		# Build the two masks (opaque + water) for this plane.
+		var n := 0
+		for j in dv:
+			for i in du:
+				var pa := _pos(d, u, v, slice, i, j)
+				var pb := _pos(d, u, v, slice + 1, i, j)
+				var a := _vox(chunk, sampler, base_x, base_z, pa)
+				var b := _vox(chunk, sampler, base_x, base_z, pb)
+				mask_op[n] = _face_opaque(a, b)
+				mask_fl[n] = _face_fluid(a, b)
+				n += 1
+		_emit_plane(mask_op, du, dv, d, u, v, slice, opaque, false)
+		_emit_plane(mask_fl, du, dv, d, u, v, slice, fluid, true)
+
+## Signed block id of the opaque face between cell a and cell b (b = a + axis),
+## or 0 if none. Positive => face normal points +axis (belongs to a); negative =>
+## normal points -axis (belongs to b).
+static func _face_opaque(a: int, b: int) -> int:
+	var a_solid := BlockDB.is_solid(a)
+	var b_solid := BlockDB.is_solid(b)
+	if a_solid and not b_solid:
+		return a
+	if b_solid and not a_solid:
+		return -b
+	return 0
+
+## Same as _face_opaque but for water, which only shows a face against air.
+static func _face_fluid(a: int, b: int) -> int:
+	if a == BlockDB.Type.WATER and b == BlockDB.Type.AIR:
+		return BlockDB.Type.WATER
+	if b == BlockDB.Type.WATER and a == BlockDB.Type.AIR:
+		return -BlockDB.Type.WATER
+	return 0
+
+static func _emit_plane(mask: PackedInt32Array, du: int, dv: int, d: int, u: int, v: int, slice: int, sa: SurfaceArrays, is_fluid: bool) -> void:
+	var j := 0
+	while j < dv:
+		var i := 0
+		while i < du:
+			var c := mask[i + j * du]
+			if c == 0:
+				i += 1
+				continue
+			# Grow width along u.
+			var w := 1
+			while i + w < du and mask[(i + w) + j * du] == c:
+				w += 1
+			# Grow height along v while the whole row matches.
+			var h := 1
+			var done := false
+			while j + h < dv and not done:
+				for k in w:
+					if mask[(i + k) + (j + h) * du] != c:
+						done = true
+						break
+				if not done:
+					h += 1
+			_emit_quad(sa, d, u, v, slice, i, j, w, h, c, is_fluid)
+			# Clear the consumed cells.
+			for hh in h:
+				for ww in w:
+					mask[(i + ww) + (j + hh) * du] = 0
+			i += w
+		j += 1
+
+static func _emit_quad(sa: SurfaceArrays, d: int, u: int, v: int, slice: int, i: int, j: int, w: int, h: int, c: int, is_fluid: bool) -> void:
+	var id := absi(c)
+	var positive := c > 0
+	var base := _axis(d, slice + 1) + _axis(u, i) + _axis(v, j)
+	var uax := _axis(u, w)
+	var vax := _axis(v, h)
+	var c0 := base
+	var c1 := base + uax
+	var c2 := base + uax + vax
+	var c3 := base + vax
+	var normal := _axis(d, 1.0 if positive else -1.0)
+
+	var col := Color(1, 1, 1, 1.0 if BlockDB.is_tintable(id) else 0.0)
+	if is_fluid:
+		col = BlockDB.get_color(id)
+	var origin := Textures.tile_origin(id)
+	var fw := float(w)
+	var fh := float(h)
+
 	var start := sa.positions.size()
+	_push(sa, c0, normal, col, Vector2(0, 0), origin)
+	_push(sa, c1, normal, col, Vector2(fw, 0), origin)
+	_push(sa, c2, normal, col, Vector2(fw, fh), origin)
+	_push(sa, c3, normal, col, Vector2(0, fh), origin)
+	if positive:
+		sa.indices.append_array(PackedInt32Array([start, start + 1, start + 2, start, start + 2, start + 3]))
+	else:
+		sa.indices.append_array(PackedInt32Array([start, start + 2, start + 1, start, start + 3, start + 2]))
 
-	for i in 4:
-		var offset: Vector3 = corners[i]
-		var col: Color
-		var uv: Vector2
-		if is_fluid:
-			col = fluid_color
-			uv = Vector2.ZERO
-		else:
-			var shade := _vertex_ao(face, offset, gx, ly, gz, sampler) * variation
-			col = Color(shade, shade, shade, tint_weight)
-			var uvc: Vector2 = UV_CORNERS[i]
-			uv = uv_rect.position + Vector2(uvc.x * uv_rect.size.x, uvc.y * uv_rect.size.y)
-		sa.positions.append(origin + offset)
-		sa.normals.append(normal)
-		sa.colors.append(col)
-		sa.uvs.append(uv)
+static func _push(sa: SurfaceArrays, pos: Vector3, normal: Vector3, col: Color, uv: Vector2, uv2: Vector2) -> void:
+	sa.positions.append(pos)
+	sa.normals.append(normal)
+	sa.colors.append(col)
+	sa.uvs.append(uv)
+	sa.uv2s.append(uv2)
 
-	sa.indices.append_array(PackedInt32Array([start, start + 1, start + 2, start, start + 2, start + 3]))
+# --- Helpers ---------------------------------------------------------------
 
-## Classic voxel ambient occlusion: darken a vertex by how many of the three
-## blocks touching that corner (two edges + one diagonal) are solid.
-static func _vertex_ao(face: String, offset: Vector3, gx: int, ly: int, gz: int, sampler: Callable) -> float:
-	var normal: Vector3 = FACES[face]["normal"]
-	var t1 := Vector3(normal.y, normal.z, normal.x)
-	var t2 := normal.cross(t1)
-	var c := offset - Vector3(0.5, 0.5, 0.5) + normal * 0.5
-	var s1 := signf(c.dot(t1))
-	var s2 := signf(c.dot(t2))
+## Reads a voxel id at chunk-local position `p` (an [x, y, z] array); falls back
+## to the world sampler when p is outside this chunk's x/z columns.
+static func _vox(chunk: Chunk, sampler: Callable, base_x: int, base_z: int, p: Array) -> int:
+	var px: int = p[0]
+	var py: int = p[1]
+	var pz: int = p[2]
+	if py < 0 or py >= CH:
+		return BlockDB.Type.AIR
+	if px >= 0 and px < CS and pz >= 0 and pz < CS:
+		return chunk.voxels[Chunk.index(px, py, pz)]
+	return int(sampler.call(base_x + px, py, base_z + pz))
 
-	var base := Vector3(gx, ly, gz) + normal
-	var side1 := _solid_at(base + t1 * s1, sampler)
-	var side2 := _solid_at(base + t2 * s2, sampler)
-	var corner := _solid_at(base + t1 * s1 + t2 * s2, sampler)
+## Builds an [x, y, z] position array with p[d] = sd, p[u] = su, p[v] = sv.
+static func _pos(d: int, u: int, v: int, sd: int, su: int, sv: int) -> Array:
+	var p := [0, 0, 0]
+	p[d] = sd
+	p[u] = su
+	p[v] = sv
+	return p
 
-	var occ := 0
-	if side1: occ += 1
-	if side2: occ += 1
-	if side1 and side2:
-		occ = 3
-	elif corner:
-		occ += 1
-
-	match occ:
-		0: return 1.0
-		1: return 0.8
-		2: return 0.65
-		_: return 0.5
-
-static func _solid_at(p: Vector3, sampler: Callable) -> bool:
-	return BlockDB.is_solid(int(sampler.call(int(round(p.x)), int(round(p.y)), int(round(p.z)))))
-
-## Deterministic per-position value in [0, 1) for cheap colour variation.
-static func _hash01(x: int, y: int, z: int) -> float:
-	var h: int = (x * 73856093) ^ (y * 19349663) ^ (z * 83492791)
-	h = h & 0x7fffffff
-	return float(h % 1000) / 1000.0
+static func _axis(axis: int, val: float) -> Vector3:
+	match axis:
+		0: return Vector3(val, 0, 0)
+		1: return Vector3(0, val, 0)
+		_: return Vector3(0, 0, val)
 
 # --- Shared materials ------------------------------------------------------
 
-## The opaque terrain material. Public so the SeasonManager can push season tint
+## The opaque terrain material. Public so SeasonManager and TextureAtlas can push
 ## uniforms onto it; a single shared instance means one call recolours the world.
 static func get_opaque_material() -> ShaderMaterial:
 	if _opaque_mat == null:
@@ -192,6 +219,7 @@ class SurfaceArrays:
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
 	var uvs := PackedVector2Array()
+	var uv2s := PackedVector2Array()
 	var indices := PackedInt32Array()
 
 	func to_arrays() -> Array:
@@ -201,5 +229,6 @@ class SurfaceArrays:
 		arr[Mesh.ARRAY_NORMAL] = normals
 		arr[Mesh.ARRAY_COLOR] = colors
 		arr[Mesh.ARRAY_TEX_UV] = uvs
+		arr[Mesh.ARRAY_TEX_UV2] = uv2s
 		arr[Mesh.ARRAY_INDEX] = indices
 		return arr

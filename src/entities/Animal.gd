@@ -173,7 +173,7 @@ func _face_travel(delta: float) -> void:
 # --- External hooks --------------------------------------------------------
 
 ## Sent by the SeasonManager (via the spawner) when a season turns.
-func migrate(direction: Vector3, distance: float = 40.0) -> void:
+func migrate(direction: Vector3, distance: float = 30.0) -> void:
 	if _state == State.FLEE or _state == State.CHARGE:
 		return
 	_migrate_target = global_position + direction.normalized() * distance

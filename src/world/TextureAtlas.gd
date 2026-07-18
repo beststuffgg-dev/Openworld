@@ -17,16 +17,22 @@ const USER_DIR := "user://textures/blocks"
 const RES_DIR := "res://textures/blocks"
 
 var atlas_texture: ImageTexture
-var _rects: Dictionary = {}   # block_id -> Rect2 in UV space
+var _origins: Dictionary = {}   # block_id -> Vector2 tile origin in UV space
 var _width := TILE
 var _height := TILE
 
 func _ready() -> void:
 	rebuild()
 
-## UV rectangle (inset to avoid tile bleeding) for a block's atlas tile.
-func uv_rect(block_id: int) -> Rect2:
-	return _rects.get(block_id, Rect2(0, 0, 1, 1))
+## Atlas-UV origin (top-left corner) of a block's tile. The mesher pairs this
+## with tiling UVs so a greedy-merged quad repeats the tile via fract() in the
+## shader (see voxel_terrain.gdshader).
+func tile_origin(block_id: int) -> Vector2:
+	return _origins.get(block_id, Vector2.ZERO)
+
+## Tile extent in atlas UV space, used by the shader to size each tile.
+func tile_size() -> Vector2:
+	return Vector2(float(TILE) / _width, float(TILE) / _height)
 
 func rebuild() -> void:
 	var n := BlockDB.count()
@@ -34,7 +40,7 @@ func rebuild() -> void:
 	_width = COLS * TILE
 	_height = rows * TILE
 	var img := Image.create(_width, _height, false, Image.FORMAT_RGBA8)
-	_rects.clear()
+	_origins.clear()
 
 	for id in n:
 		var col := id % COLS
@@ -47,18 +53,13 @@ func rebuild() -> void:
 			img.fill_rect(Rect2i(ox, oy, TILE, TILE), BlockDB.get_color(id))
 		else:
 			img.blit_rect(tile, Rect2i(0, 0, TILE, TILE), Vector2i(ox, oy))
-		# Inset by half a texel so nearest-filtered sampling never bleeds into
-		# the neighbouring tile.
-		var hu := 0.5 / _width
-		var hv := 0.5 / _height
-		_rects[id] = Rect2(
-			float(ox) / _width + hu,
-			float(oy) / _height + hv,
-			float(TILE) / _width - 2.0 * hu,
-			float(TILE) / _height - 2.0 * hv)
+		_origins[id] = Vector2(float(ox) / _width, float(oy) / _height)
 
 	atlas_texture = ImageTexture.create_from_image(img)
-	ChunkMesher.get_opaque_material().set_shader_parameter("atlas", atlas_texture)
+	var mat := ChunkMesher.get_opaque_material()
+	mat.set_shader_parameter("atlas", atlas_texture)
+	mat.set_shader_parameter("tile_size", tile_size())
+	mat.set_shader_parameter("voxel_scale", Chunk.VOXEL_SCALE)
 
 # Returns a 16x16 RGBA8 image for a block's texture, or null if none exists.
 func _load_tile_image(name: String) -> Image:

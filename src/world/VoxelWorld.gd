@@ -118,7 +118,10 @@ func _build_chunk_node(coord: Vector2i) -> void:
 	var mi: MeshInstance3D = existing
 	if mi == null:
 		mi = MeshInstance3D.new()
-		mi.position = chunk.world_origin()
+		# The mesh is built in voxel units; scale the node so each voxel is
+		# VOXEL_SCALE metres. Uniform scale keeps the trimesh collision correct.
+		mi.scale = Vector3.ONE * Chunk.VOXEL_SCALE
+		mi.position = chunk.world_origin() * Chunk.VOXEL_SCALE
 		add_child(mi)
 		_nodes[coord] = mi
 	mi.mesh = mesh
@@ -165,7 +168,7 @@ func _free_chunk(coord: Vector2i) -> void:
 func _sample_block(gx: int, gy: int, gz: int) -> int:
 	if gy < 0 or gy >= CHUNK_HEIGHT:
 		return BlockDB.Type.AIR
-	var coord := _world_to_chunk(Vector3(gx, 0, gz))
+	var coord := _voxel_to_chunk(gx, gz)
 	var chunk: Chunk = _chunks.get(coord)
 	if chunk == null:
 		return BlockDB.Type.AIR
@@ -180,7 +183,7 @@ func get_block_world(pos: Vector3i) -> int:
 func set_block_world(pos: Vector3i, id: int) -> bool:
 	if pos.y < 0 or pos.y >= CHUNK_HEIGHT:
 		return false
-	var coord := _world_to_chunk(Vector3(pos.x, 0, pos.z))
+	var coord := _voxel_to_chunk(pos.x, pos.z)
 	var chunk: Chunk = _chunks.get(coord)
 	if chunk == null:
 		return false
@@ -199,6 +202,36 @@ func set_block_world(pos: Vector3i, id: int) -> bool:
 		_remesh_now(coord + Vector2i(0, 1))
 	return true
 
+## Sets every voxel in the inclusive box [minv, maxv] to `id`, remeshing each
+## affected chunk exactly once (a naive per-block loop would remesh thousands of
+## times). `exclude` is an optional voxel-space AABB left untouched — used so a
+## bulk placement doesn't bury the player. Returns the number of voxels changed.
+func set_blocks_bulk(minv: Vector3i, maxv: Vector3i, id: int, exclude := AABB()) -> int:
+	var changed := 0
+	var affected := {}
+	var has_exclude := exclude.size != Vector3.ZERO
+	for y in range(maxi(minv.y, 0), mini(maxv.y, CHUNK_HEIGHT - 1) + 1):
+		for z in range(minv.z, maxv.z + 1):
+			for x in range(minv.x, maxv.x + 1):
+				if has_exclude and exclude.has_point(Vector3(x, y, z)):
+					continue
+				var coord := _voxel_to_chunk(x, z)
+				var chunk: Chunk = _chunks.get(coord)
+				if chunk == null:
+					continue
+				chunk.set_local(x - coord.x * CHUNK_SIZE, y, z - coord.y * CHUNK_SIZE, id)
+				affected[coord] = true
+				changed += 1
+	# Remesh every affected chunk plus their neighbours (for seam culling), once.
+	var to_remesh := {}
+	for coord in affected:
+		to_remesh[coord] = true
+		for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			to_remesh[coord + off] = true
+	for coord in to_remesh:
+		_remesh_now(coord)
+	return changed
+
 func _remesh_now(coord: Vector2i) -> void:
 	if _states.get(coord) != State.READY:
 		return
@@ -212,5 +245,11 @@ func is_ready_at(pos: Vector3) -> bool:
 # Helpers
 # ---------------------------------------------------------------------------
 
+## Chunk coordinate from a world-space (metre) position.
 func _world_to_chunk(p: Vector3) -> Vector2i:
-	return Vector2i(floori(p.x / float(CHUNK_SIZE)), floori(p.z / float(CHUNK_SIZE)))
+	var span := CHUNK_SIZE * Chunk.VOXEL_SCALE
+	return Vector2i(floori(p.x / span), floori(p.z / span))
+
+## Chunk coordinate from integer voxel coordinates.
+func _voxel_to_chunk(vx: int, vz: int) -> Vector2i:
+	return Vector2i(floori(vx / float(CHUNK_SIZE)), floori(vz / float(CHUNK_SIZE)))

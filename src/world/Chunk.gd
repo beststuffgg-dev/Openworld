@@ -12,6 +12,20 @@ const CHUNK_SIZE := 16
 const CHUNK_HEIGHT := 96
 const VOLUME := CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT
 
+## Physical size of one voxel in world units (metres). Minecraft blocks are 1.0;
+## this makes each block 0.5 — half Minecraft's size — for finer building detail.
+## Greedy meshing (ChunkMesher) keeps the extra block density cheap. Change this
+## one constant to rescale the whole world; everything else derives from it.
+const VOXEL_SCALE := 0.5
+
+## Converts world-space metres to integer voxel coordinates.
+static func world_to_voxel(w: Vector3) -> Vector3i:
+	return Vector3i(floori(w.x / VOXEL_SCALE), floori(w.y / VOXEL_SCALE), floori(w.z / VOXEL_SCALE))
+
+## World-space centre of a voxel.
+static func voxel_center(v: Vector3i) -> Vector3:
+	return (Vector3(v) + Vector3(0.5, 0.5, 0.5)) * VOXEL_SCALE
+
 ## Chunk grid coordinates (world position = coord * CHUNK_SIZE).
 var cx: int
 var cz: int

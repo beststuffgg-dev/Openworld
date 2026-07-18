@@ -6,7 +6,7 @@ extends Node3D
 ## composition root; as systems grow (weather, NPCs, quests) they get wired in
 ## here or moved into their own coordinators.
 
-const SPAWN_XZ := Vector2(8, 8)
+const SPAWN_XZ := Vector2(2, 2)
 
 var _world: VoxelWorld
 var _player: Player
@@ -43,7 +43,11 @@ func _setup_environment() -> void:
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.5
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	# SSAO provides the soft block-edge shading (greedy meshing drops baked AO).
+	# Radius is tuned for the 0.5 m voxels.
 	env.ssao_enabled = true
+	env.ssao_radius = 0.6
+	env.ssao_intensity = 2.0
 	env.glow_enabled = true
 	env.fog_enabled = true
 	env.fog_density = 0.004
@@ -73,8 +77,9 @@ func _setup_player() -> void:
 	_player = Player.new()
 	_player.name = "Player"
 	_player.world = _world
-	# Start high; try_ground_spawn() drops us onto terrain once it streams in.
-	_player.global_position = Vector3(SPAWN_XZ.x, Chunk.CHUNK_HEIGHT, SPAWN_XZ.y)
+	# Start at the top of the world; try_ground_spawn() drops us onto terrain
+	# once it streams in. Heights are in world metres (voxels * VOXEL_SCALE).
+	_player.global_position = Vector3(SPAWN_XZ.x, Chunk.CHUNK_HEIGHT * Chunk.VOXEL_SCALE, SPAWN_XZ.y)
 	add_child(_player)
 	_world.set_track_target(_player)
 
@@ -101,10 +106,22 @@ func _setup_ui() -> void:
 	add_child(hud)
 	hud.setup(_player, _cycle, _seasons, _weather)
 
+	var is_touch := DisplayServer.is_touchscreen_available()
+
+	# On-screen controls (created before the menu so the menu can reference them).
+	var touch := TouchControls.new()
+	touch.name = "TouchControls"
+	touch.setup(_player)
+	add_child(touch)
+
+	var settings := SettingsMenu.new()
+	settings.name = "SettingsMenu"
+	settings.setup(_player, touch, is_touch)
+	add_child(settings)
+
+	touch.set_settings(settings)
+	touch.visible = is_touch
+
 func _process(_delta: float) -> void:
 	if not _spawned:
 		_spawned = _player.try_ground_spawn()
-
-func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("open_texture_editor"):
-		get_tree().change_scene_to_file("res://tools/TextureEditor.tscn")

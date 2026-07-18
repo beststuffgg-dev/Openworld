@@ -42,11 +42,17 @@ scene files to merge.
 | Jump | `Space` |
 | Sprint | `Shift` |
 | Look | Mouse |
-| Break block / attack animal | Left click |
-| Place block | Right click |
+| Break blocks / attack animal | Left click |
+| Place blocks | Right click |
 | Change block | Mouse wheel |
-| Release / capture mouse | `Esc` |
-| Open Texture Editor | `F1` |
+| Brush size − / + | `[` / `]` |
+| Settings (Texture Editor, brush, quit) | `Esc` |
+
+On a touchscreen, on-screen controls appear automatically: left-thumb movement
+joystick, right-thumb look, and buttons for jump / break / place / brush / settings.
+
+Each block is **0.5 m** — half the size of a Minecraft block — so builds can be
+more detailed. Use a larger brush to place or dig many at once (up to 32³).
 
 ## What works today
 
@@ -57,8 +63,11 @@ scene files to merge.
 - **Caves** carved with 3D noise, **water** to sea level, and scattered **trees**.
 - **Threaded chunk streaming** — terrain generation runs on a `WorkerThreadPool`;
   mesh building is rate-limited per frame so movement stays smooth.
-- **Culled meshing with ambient-occlusion vertex shading** for the softer,
-  less-blocky read, plus a translucent water surface.
+- **Greedy meshing** — coplanar faces of the same block merge into large quads,
+  keeping the geometry cheap even at the 0.5 m block size. Soft edge shading
+  comes from the environment's SSAO; a translucent water surface renders on top.
+- **0.5 m blocks + an NxNxN brush** — build at higher detail, and place or dig
+  boxes up to 32³ at once (single-remesh bulk edits), brush size on `[` / `]`.
 - **Mine & build** any block, with correct chunk-seam remeshing.
 - **Day/night cycle** with a moving sun, warm sunrises and darkening nights.
 - **Seasons** — Spring/Summer/Autumn/Winter recolour grass and leaves live
@@ -80,11 +89,11 @@ scene files to merge.
 
 ## Making your own block textures
 
-Press **F1** in game to open the Texture Editor. Pick a block from the list,
-paint on the 16×16 grid (colour picker + quick palette + eraser), hit **Save**,
-then **Back to Game** — your art is written to `user://textures/blocks/` and
-shows on that block right away. To ship a texture with the project instead, drop
-a 16×16 `<name>.png` into `textures/blocks/`. See that folder's README for
+Open **Settings** (`Esc`) and choose **Texture Editor**. Pick a block from the
+list, paint on the 16×16 grid (colour picker + quick palette + eraser), hit
+**Save**, then **Back to Game** — your art is written to `user://textures/blocks/`
+and shows on that block right away. To ship a texture with the project instead,
+drop a 16×16 `<name>.png` into `textures/blocks/`. See that folder's README for
 details.
 
 ## Project layout
@@ -100,10 +109,10 @@ src/
     BlockRegistry.gd     Block types & properties (autoload: BlockDB)
     Chunk.gd             Raw voxel storage
     TerrainGenerator.gd  Noise-based terrain + biomes + trees (thread-safe)
-    ChunkMesher.gd       Culled meshing + ambient occlusion + atlas UVs
-    VoxelWorld.gd        Chunk streaming, collision, block editing
+    ChunkMesher.gd       Greedy meshing + tiling atlas UVs
+    VoxelWorld.gd        Chunk streaming, collision, single-block & bulk editing
     TextureAtlas.gd      Runtime block texture atlas (autoload: Textures)
-    voxel_terrain.gdshader  Opaque terrain shader (atlas + shade + season tint)
+    voxel_terrain.gdshader  Opaque terrain shader (tiled atlas + variation + tint)
   player/
     Player.gd            First-person controller + block/animal interaction
     PlayerStats.gd       Health / hunger / stamina survival stats
@@ -115,7 +124,10 @@ src/
     DayNightCycle.gd     Sun + sky over a 24h cycle
     SeasonManager.gd     Seasons + live foliage tinting
     WeatherManager.gd    Evolving weather + precipitation + lightning
-  ui/HUD.gd
+  ui/
+    HUD.gd               Crosshair, stats, clock, season, weather, brush
+    SettingsMenu.gd      Pause/settings overlay (Esc) — houses Texture Editor
+    TouchControls.gd     On-screen joystick + buttons for touchscreens
 tools/TextureEditor.tscn/.gd   In-game pixel texture editor (F1)
 textures/blocks/         Optional shipped block PNGs (16×16)
 docs/                    Architecture, design vision, roadmap

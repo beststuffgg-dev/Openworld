@@ -14,6 +14,7 @@ const JUMP_VELOCITY := 6.0
 const MOUSE_SENSITIVITY := 0.0025
 const REACH := 6.0
 const ATTACK_DAMAGE := 6.0
+const MAX_BRUSH := 32
 
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _camera: Camera3D
@@ -23,11 +24,16 @@ var _pitch: float = 0.0
 var world: VoxelWorld
 var selected_index: int = 0
 var stats: PlayerStats
+## Edge length of the cube placed/destroyed per click (1 = single block).
+var brush_size: int = 1
 
 var _spawn_point := Vector3.ZERO
 var _respawning := false
+var _touch_move := Vector2.ZERO   # set by on-screen joystick
+var _jump_queued := false         # set by on-screen jump button
 
 signal selection_changed(block_id: int)
+signal brush_changed(size: int)
 signal spawn_ready
 
 func _ready() -> void:
@@ -36,7 +42,10 @@ func _ready() -> void:
 	stats.name = "PlayerStats"
 	add_child(stats)
 	stats.died.connect(_on_died)
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	# Capture the mouse for look controls on desktop; touch devices use the
+	# on-screen controls instead.
+	if not DisplayServer.is_touchscreen_available():
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _build_body() -> void:
 	var col := CollisionShape3D.new()
@@ -61,11 +70,7 @@ func _build_body() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
-		_pitch = clampf(_pitch - event.relative.y * MOUSE_SENSITIVITY, -1.5, 1.5)
-		_camera.rotation.x = _pitch
-	elif event.is_action_pressed("toggle_mouse"):
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
+		apply_look(event.relative, MOUSE_SENSITIVITY)
 	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_cycle_selection(1)
@@ -76,6 +81,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_use_primary()
 			elif event.button_index == MOUSE_BUTTON_RIGHT:
 				_place_block()
+	elif event.is_action_pressed("brush_increase"):
+		set_brush_size(brush_size + 1)
+	elif event.is_action_pressed("brush_decrease"):
+		set_brush_size(brush_size - 1)
 
 func _physics_process(delta: float) -> void:
 	if _respawning:
@@ -86,10 +95,12 @@ func _physics_process(delta: float) -> void:
 
 	if not is_on_floor():
 		velocity.y -= _gravity * delta
-	if Input.is_action_just_pressed("jump") and is_on_floor():
+	if (Input.is_action_just_pressed("jump") or _jump_queued) and is_on_floor():
 		velocity.y = JUMP_VELOCITY
+	_jump_queued = false
 
-	var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	# Combine keyboard and on-screen joystick movement.
+	var input := (Input.get_vector("move_left", "move_right", "move_forward", "move_back") + _touch_move).limit_length(1.0)
 	var dir := (transform.basis * Vector3(input.x, 0, input.y)).normalized()
 
 	# Sprinting is gated by stamina; the stats node drains/recovers it.
@@ -118,9 +129,11 @@ func try_ground_spawn() -> bool:
 	return false
 
 func _drop_to_ground() -> bool:
+	var v := Chunk.world_to_voxel(global_position)
 	for y in range(Chunk.CHUNK_HEIGHT - 1, 0, -1):
-		if BlockDB.is_solid(world.get_block_world(Vector3i(int(global_position.x), y, int(global_position.z)))):
-			global_position.y = y + 2.0
+		if BlockDB.is_solid(world.get_block_world(Vector3i(v.x, y, v.z))):
+			# Stand on top of the block: its top surface is (y + 1) * VOXEL_SCALE.
+			global_position.y = (y + 1) * Chunk.VOXEL_SCALE + 0.2
 			velocity = Vector3.ZERO
 			return true
 	return false
@@ -133,7 +146,7 @@ func receive_attack(amount: float) -> void:
 func _on_died() -> void:
 	# Respawn back at the original spawn column with fresh stats.
 	stats.reset()
-	global_position = Vector3(_spawn_point.x, Chunk.CHUNK_HEIGHT, _spawn_point.z)
+	global_position = Vector3(_spawn_point.x, Chunk.CHUNK_HEIGHT * Chunk.VOXEL_SCALE, _spawn_point.z)
 	velocity = Vector3.ZERO
 	_respawning = true
 
@@ -145,7 +158,31 @@ func _cycle_selection(dir: int) -> void:
 	selected_index = (selected_index + dir + count) % count
 	selection_changed.emit(selected_block())
 
-## Left click: attack an animal if the ray hits one, otherwise mine the block.
+func set_brush_size(n: int) -> void:
+	brush_size = clampi(n, 1, MAX_BRUSH)
+	brush_changed.emit(brush_size)
+
+## Rotate the view. Shared by mouse look and the on-screen touch look area.
+func apply_look(rel: Vector2, sensitivity: float) -> void:
+	rotate_y(-rel.x * sensitivity)
+	_pitch = clampf(_pitch - rel.y * sensitivity, -1.5, 1.5)
+	_camera.rotation.x = _pitch
+
+# --- On-screen touch control hooks -----------------------------------------
+
+func set_move_input(v: Vector2) -> void:
+	_touch_move = v
+
+func queue_jump() -> void:
+	_jump_queued = true
+
+func touch_primary() -> void:
+	_use_primary()
+
+func touch_secondary() -> void:
+	_place_block()
+
+## Left click: attack an animal if the ray hits one, otherwise mine an NxNxN box.
 func _use_primary() -> void:
 	if not _ray.is_colliding():
 		return
@@ -158,24 +195,33 @@ func _use_primary() -> void:
 			# the inventory system lands).
 			stats.eat(food)
 		return
-	var point := _ray.get_collision_point()
-	var normal := _ray.get_collision_normal()
-	# Step just inside the hit face to land on the block that was struck.
-	var target := _voxel_from_hit(point, -normal)
-	world.set_block_world(target, BlockDB.Type.AIR)
+	var target := _voxel_from_hit(_ray.get_collision_point(), -_ray.get_collision_normal())
+	var box := _brush_box(target)
+	world.set_blocks_bulk(box[0], box[1], BlockDB.Type.AIR)
 
+## Right click: place an NxNxN box of the selected block, skipping the player.
 func _place_block() -> void:
 	if not _ray.is_colliding():
 		return
-	var point := _ray.get_collision_point()
-	var normal := _ray.get_collision_normal()
-	var target := _voxel_from_hit(point, normal)
-	# Don't place a block inside the player's own capsule.
-	var feet := Vector3i(floori(global_position.x), floori(global_position.y), floori(global_position.z))
-	if target == feet or target == feet + Vector3i(0, 1, 0):
-		return
-	world.set_block_world(target, selected_block())
+	var target := _voxel_from_hit(_ray.get_collision_point(), _ray.get_collision_normal())
+	var box := _brush_box(target)
+	world.set_blocks_bulk(box[0], box[1], selected_block(), _player_voxel_aabb())
+
+## Returns [min_voxel, max_voxel] for a brush of `brush_size` centred on target.
+func _brush_box(target: Vector3i) -> Array:
+	var r := (brush_size - 1) / 2
+	var extra := (brush_size - 1) % 2  # extend +1 side for even sizes
+	var lo := target - Vector3i(r, r, r)
+	var hi := target + Vector3i(r + extra, r + extra, r + extra)
+	return [lo, hi]
+
+## The voxels the player's capsule occupies, as a voxel-space AABB.
+func _player_voxel_aabb() -> AABB:
+	var half := Vector3(0.35, 0, 0.35)
+	var lo := Chunk.world_to_voxel(global_position - half)
+	var hi := Chunk.world_to_voxel(global_position + Vector3(0.35, 1.8, 0.35))
+	return AABB(Vector3(lo), Vector3(hi - lo) + Vector3.ONE)
 
 func _voxel_from_hit(point: Vector3, dir: Vector3) -> Vector3i:
-	var p := point + dir * 0.5
-	return Vector3i(floori(p.x), floori(p.y), floori(p.z))
+	# Step half a voxel along the hit direction, then snap to the voxel grid.
+	return Chunk.world_to_voxel(point + dir * (0.5 * Chunk.VOXEL_SCALE))

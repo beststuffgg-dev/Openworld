@@ -12,9 +12,10 @@ enum Species { CHICKEN, COW, BULL }
 
 @export var max_animals: int = 12
 @export var spawn_interval: float = 3.0
-@export var spawn_min_dist: float = 16.0
-@export var spawn_max_dist: float = 40.0
-@export var despawn_dist: float = 72.0
+# Distances are in world metres (voxels are 0.5 m; a chunk is 8 m).
+@export var spawn_min_dist: float = 8.0
+@export var spawn_max_dist: float = 24.0
+@export var despawn_dist: float = 40.0
 
 var _world: VoxelWorld
 var _player: Node3D
@@ -70,26 +71,29 @@ func _current_cap() -> int:
 func _try_spawn() -> void:
 	if _animals.size() >= _current_cap():
 		return
-	# Pick a spot in a ring around the player.
+	# Pick a spot (world metres) in a ring around the player.
 	var angle := _rng.randf() * TAU
 	var dist := _rng.randf_range(spawn_min_dist, spawn_max_dist)
-	var wx := int(round(_player.global_position.x + cos(angle) * dist))
-	var wz := int(round(_player.global_position.z + sin(angle) * dist))
-	var probe := Vector3(wx, 0, wz)
+	var probe := _player.global_position + Vector3(cos(angle) * dist, 0, sin(angle) * dist)
 	if not _world.is_ready_at(probe):
 		return
 
-	var surface := _find_surface(wx, wz)
+	var v := Chunk.world_to_voxel(probe)
+	var surface := _find_surface(v.x, v.z)
 	if surface < 0:
 		return
 
 	var animal := _make_animal(_choose_species())
 	animal.player = _player
 	add_child(animal)
-	animal.global_position = Vector3(wx + 0.5, surface + 1.5, wz + 0.5)
+	# Place on top of the surface voxel, converting voxel coords back to metres.
+	animal.global_position = Vector3(
+		(v.x + 0.5) * Chunk.VOXEL_SCALE,
+		(surface + 1) * Chunk.VOXEL_SCALE + 0.2,
+		(v.z + 0.5) * Chunk.VOXEL_SCALE)
 	_animals.append(animal)
 
-## Returns the y of the top solid, dry-land block in this column, or -1.
+## Returns the voxel y of the top solid, dry-land block in this column, or -1.
 func _find_surface(wx: int, wz: int) -> int:
 	for y in range(Chunk.CHUNK_HEIGHT - 2, 0, -1):
 		var b := _world.get_block_world(Vector3i(wx, y, wz))
