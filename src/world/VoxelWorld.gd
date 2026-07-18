@@ -116,14 +116,12 @@ func _drain_mesh_queue() -> void:
 		if _states.get(coord) != State.GENERATED:
 			continue
 		_build_chunk_node(coord)
-		# The neighbours were meshed while this chunk was still absent, so their
-		# seam faces need re-culling now that this chunk's data exists.
-		_remesh_ready_neighbors(coord)
 		budget -= 1
-
-func _remesh_ready_neighbors(coord: Vector2i) -> void:
-	for offset in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-		_remesh_now(coord + offset)
+		# Note: neighbours are NOT re-culled here. A chunk meshed before a
+		# neighbour existed keeps a few border faces that later become hidden
+		# inside the (solid) neighbour — invisible waste, but re-culling every
+		# neighbour column per new chunk was a big streaming cost. Removing it is
+		# the biggest streaming-throughput win.
 
 ## Meshes a column at its current LOD (detailed per-section, or coarse) and marks
 ## it READY.

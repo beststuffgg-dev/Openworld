@@ -111,7 +111,7 @@ static func _cvox(chunk: Chunk, sampler: Callable, base_x: int, base_z: int, cel
 	if fx >= 0 and fx < CS and fz >= 0 and fz < CS:
 		if fy < 0 or fy >= CH:
 			return BlockDB.Type.AIR
-		return chunk.get_local(fx, fy, fz)
+		return chunk.get_block_fast(fx, fy, fz)
 	return int(sampler.call(base_x + fx, fy, base_z + fz))
 
 # --- Greedy meshing --------------------------------------------------------
@@ -270,7 +270,7 @@ static func _vox(chunk: Chunk, sampler: Callable, base_x: int, base_z: int, p: A
 	if px >= 0 and px < CS and pz >= 0 and pz < CS:
 		if py < 0 or py >= CH:
 			return BlockDB.Type.AIR
-		return chunk.get_local(px, py, pz)
+		return chunk.get_block_fast(px, py, pz)
 	return int(sampler.call(base_x + px, py, base_z + pz))
 
 ## Builds an [x, y, z] position array with p[d] = sd, p[u] = su, p[v] = sv.

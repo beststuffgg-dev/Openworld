@@ -70,11 +70,15 @@ static func _local_index(lx: int, ly: int, lz: int) -> int:
 func get_local(lx: int, ly: int, lz: int) -> int:
 	if not in_bounds(lx, ly, lz):
 		return BlockDB.Type.AIR
+	return get_block_fast(lx, ly, lz)
+
+## Bounds-check-free read for hot loops (the mesher already validates coords).
+func get_block_fast(lx: int, ly: int, lz: int) -> int:
 	@warning_ignore("integer_division")
 	var s = _sections[ly / SECTION_H]
 	if typeof(s) == TYPE_INT:
 		return s
-	return s[_local_index(lx, ly, lz)]
+	return s[lx + lz * CHUNK_SIZE + (ly % SECTION_H) * CHUNK_SIZE * CHUNK_SIZE]
 
 func set_local(lx: int, ly: int, lz: int, id: int) -> void:
 	if not in_bounds(lx, ly, lz):
