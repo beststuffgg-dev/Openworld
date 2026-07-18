@@ -102,28 +102,44 @@ func _remesh_ready_neighbors(coord: Vector2i) -> void:
 	for offset in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		_remesh_now(coord + offset)
 
+## Builds all vertical section meshes for a column and marks it READY.
 func _build_chunk_node(coord: Vector2i) -> void:
-	var chunk: Chunk = _chunks[coord]
-	var mesh := ChunkMesher.build(chunk, _sample_block)
+	if not _nodes.has(coord):
+		var arr := []
+		arr.resize(Chunk.SECTIONS)  # untyped Array fills with null
+		_nodes[coord] = arr
+	for sec in Chunk.SECTIONS:
+		_build_section_node(coord, sec)
+	_states[coord] = State.READY
 
-	var existing: MeshInstance3D = _nodes.get(coord)
+## Builds (or clears) the MeshInstance for one vertical section of a column.
+func _build_section_node(coord: Vector2i, sec: int) -> void:
+	var chunk: Chunk = _chunks.get(coord)
+	if chunk == null or not _nodes.has(coord):
+		return
+	var nodes: Array = _nodes[coord]
+	var mi: MeshInstance3D = nodes[sec]
+
+	# Skip sections that never had any block written.
+	var mesh: ArrayMesh = null
+	if chunk.section_has_content(sec):
+		var y_lo := sec * Chunk.SECTION_H
+		mesh = ChunkMesher.build_section(chunk, _sample_block, y_lo, y_lo + Chunk.SECTION_H)
+
 	if mesh == null:
-		# Empty chunk (e.g. all air): drop any old node, mark ready.
-		if existing:
-			existing.queue_free()
-			_nodes.erase(coord)
-		_states[coord] = State.READY
+		if mi:
+			mi.queue_free()
+			nodes[sec] = null
 		return
 
-	var mi: MeshInstance3D = existing
 	if mi == null:
 		mi = MeshInstance3D.new()
-		# The mesh is built in voxel units; scale the node so each voxel is
-		# VOXEL_SCALE metres. Uniform scale keeps the trimesh collision correct.
+		# Mesh is built in voxel units; scale the node so a voxel is VOXEL_SCALE
+		# metres. Uniform scale keeps the trimesh collision correct.
 		mi.scale = Vector3.ONE * Chunk.VOXEL_SCALE
 		mi.position = chunk.world_origin() * Chunk.VOXEL_SCALE
 		add_child(mi)
-		_nodes[coord] = mi
+		nodes[sec] = mi
 	mi.mesh = mesh
 
 	# Rebuild static collision from the mesh.
@@ -134,8 +150,6 @@ func _build_chunk_node(coord: Vector2i) -> void:
 	shape.shape = mesh.create_trimesh_shape()
 	body.add_child(shape)
 	mi.add_child(body)
-
-	_states[coord] = State.READY
 
 func _unload_far(center: Vector2i) -> void:
 	var r := GameState.view_distance_chunks + 2
@@ -153,7 +167,9 @@ func _free_chunk(coord: Vector2i) -> void:
 		WorkerThreadPool.wait_for_task_completion(_tasks[coord])
 		_tasks.erase(coord)
 	if _nodes.has(coord):
-		_nodes[coord].queue_free()
+		for mi in _nodes[coord]:
+			if mi:
+				mi.queue_free()
 		_nodes.erase(coord)
 	_chunks.erase(coord)
 	_states.erase(coord)
@@ -179,7 +195,7 @@ func _sample_block(gx: int, gy: int, gz: int) -> int:
 func get_block_world(pos: Vector3i) -> int:
 	return _sample_block(pos.x, pos.y, pos.z)
 
-## Places or removes a block and remeshes the affected chunk(s) immediately.
+## Places or removes a block and remeshes only the affected section(s).
 func set_block_world(pos: Vector3i, id: int) -> bool:
 	if pos.y < 0 or pos.y >= CHUNK_HEIGHT:
 		return false
@@ -190,16 +206,24 @@ func set_block_world(pos: Vector3i, id: int) -> bool:
 	var lx := pos.x - coord.x * CHUNK_SIZE
 	var lz := pos.z - coord.y * CHUNK_SIZE
 	chunk.set_local(lx, pos.y, lz, id)
-	_remesh_now(coord)
-	# If the edit was on a border, remesh the neighbour so its seam faces update.
+
+	@warning_ignore("integer_division")
+	var sec := pos.y / Chunk.SECTION_H
+	_remesh_section(coord, sec)
+	# Edits on a vertical section boundary touch the neighbouring section too.
+	if pos.y % Chunk.SECTION_H == 0:
+		_remesh_section(coord, sec - 1)
+	elif pos.y % Chunk.SECTION_H == Chunk.SECTION_H - 1:
+		_remesh_section(coord, sec + 1)
+	# Edits on a horizontal chunk border re-cull the neighbour column's section.
 	if lx == 0:
-		_remesh_now(coord + Vector2i(-1, 0))
+		_remesh_section(coord + Vector2i(-1, 0), sec)
 	elif lx == CHUNK_SIZE - 1:
-		_remesh_now(coord + Vector2i(1, 0))
+		_remesh_section(coord + Vector2i(1, 0), sec)
 	if lz == 0:
-		_remesh_now(coord + Vector2i(0, -1))
+		_remesh_section(coord + Vector2i(0, -1), sec)
 	elif lz == CHUNK_SIZE - 1:
-		_remesh_now(coord + Vector2i(0, 1))
+		_remesh_section(coord + Vector2i(0, 1), sec)
 	return true
 
 ## Sets every voxel in the inclusive box [minv, maxv] to `id`, remeshing each
@@ -222,21 +246,33 @@ func set_blocks_bulk(minv: Vector3i, maxv: Vector3i, id: int, exclude := AABB())
 				chunk.set_local(x - coord.x * CHUNK_SIZE, y, z - coord.y * CHUNK_SIZE, id)
 				affected[coord] = true
 				changed += 1
-	# Remesh every affected chunk plus their neighbours (for seam culling), once.
-	var to_remesh := {}
+	# Remesh only the affected sections of each touched column and its
+	# neighbours (for seam culling), each section at most once.
+	var sec_lo := clampi((minv.y - 1) / Chunk.SECTION_H, 0, Chunk.SECTIONS - 1)
+	var sec_hi := clampi((maxv.y + 1) / Chunk.SECTION_H, 0, Chunk.SECTIONS - 1)
+	var cols := {}
 	for coord in affected:
-		to_remesh[coord] = true
+		cols[coord] = true
 		for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			to_remesh[coord + off] = true
-	for coord in to_remesh:
-		_remesh_now(coord)
+			cols[coord + off] = true
+	for coord in cols:
+		for sec in range(sec_lo, sec_hi + 1):
+			_remesh_section(coord, sec)
 	return changed
 
+## Rebuilds every section of a READY column (used when a new neighbour appears).
 func _remesh_now(coord: Vector2i) -> void:
 	if _states.get(coord) != State.READY:
 		return
-	_states[coord] = State.GENERATED
 	_build_chunk_node(coord)
+
+## Rebuilds a single section of a READY column.
+func _remesh_section(coord: Vector2i, sec: int) -> void:
+	if sec < 0 or sec >= Chunk.SECTIONS:
+		return
+	if _states.get(coord) != State.READY:
+		return
+	_build_section_node(coord, sec)
 
 func is_ready_at(pos: Vector3) -> bool:
 	return _states.get(_world_to_chunk(pos)) == State.READY

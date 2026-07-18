@@ -28,8 +28,12 @@ Make the core scale and look better before piling gameplay on it.
       SSAO now provides edge shading, per-voxel variation moved to the shader.
 - ✅ **Configurable voxel scale** — blocks are 0.5 m (`Chunk.VOXEL_SCALE`), with
       an NxNxN bulk build/dig brush (up to 32³) via single-remesh edits.
-- ⬜ **Vertical chunk sections** (stacked 16³) for taller worlds & true 3D LOD
-- ⬜ **Chunk LOD** + distance-based mesh simplification
+- 🟡 **Vertical chunk sections** — columns are now 256 voxels tall, split into
+      32-tall sections that mesh independently (empty sections skip, each is its
+      own MeshInstance for free frustum culling, and an edit re-meshes only the
+      section it touches). Face culling between sections stays automatic. This is
+      the substrate for true 3D LOD (next), and terrain now uses the extra height.
+- ⬜ **Chunk LOD** + distance-based mesh simplification (per-section)
 - 🟡 **Texture atlas** with per-block 16×16 tiles + an in-game pixel **Texture
       Editor** (F1) that saves PNGs picked up live by the atlas. PBR maps,
       connected textures and a bevelled-edge shader still to come.

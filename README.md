@@ -66,6 +66,9 @@ more detailed. Use a larger brush to place or dig many at once (up to 32³).
 - **Greedy meshing** — coplanar faces of the same block merge into large quads,
   keeping the geometry cheap even at the 0.5 m block size. Soft edge shading
   comes from the environment's SSAO; a translucent water surface renders on top.
+- **Tall worlds via vertical sections** — 256-voxel-tall columns are split into
+  32-tall sections that mesh independently: empty sections cost nothing, each is
+  separately frustum-culled, and an edit only re-meshes the section it touches.
 - **0.5 m blocks + an NxNxN brush** — build at higher detail, and place or dig
   boxes up to 32³ at once (single-remesh bulk edits), brush size on `[` / `]`.
 - **Mine & build** any block, with correct chunk-seam remeshing.

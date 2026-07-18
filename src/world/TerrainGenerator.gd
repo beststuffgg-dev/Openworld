@@ -12,7 +12,7 @@ extends RefCounted
 
 const CHUNK_SIZE := Chunk.CHUNK_SIZE
 const CHUNK_HEIGHT := Chunk.CHUNK_HEIGHT
-const SEA_LEVEL := 40
+const SEA_LEVEL := 72
 const DIRT_DEPTH := 4
 
 enum Biome { OCEAN, BEACH, DESERT, PLAINS, FOREST, JUNGLE, TUNDRA, SNOW_MOUNTAIN, SWAMP, MOUNTAIN }
@@ -71,19 +71,20 @@ func _generate_column(chunk: Chunk, lx: int, lz: int, wx: int, wz: int) -> void:
 		_place_tree(chunk, lx, lz, height + 1)
 
 func _surface_height(wx: int, wz: int) -> int:
+	# Amplitudes are scaled up for the taller world (CHUNK_HEIGHT = 256).
 	# Continent shapes broad land/ocean masses in [-1, 1].
 	var continent := _continent.get_noise_2d(wx, wz)
 	# Rolling hills.
-	var hills := _hills.get_noise_2d(wx, wz) * 10.0
+	var hills := _hills.get_noise_2d(wx, wz) * 16.0
 	# Mountains only rise where the ridged component is positive, squared so the
 	# terrain stays mostly gentle with occasional dramatic peaks.
 	var m := _mountains.get_noise_2d(wx, wz)
 	var mountains := 0.0
 	if m > 0.0:
-		mountains = m * m * 55.0
-	var fine := _detail.get_noise_2d(wx, wz) * 2.0
+		mountains = m * m * 110.0
+	var fine := _detail.get_noise_2d(wx, wz) * 3.0
 
-	var h := SEA_LEVEL + continent * 22.0 + hills + mountains + fine
+	var h := SEA_LEVEL + continent * 36.0 + hills + mountains + fine
 	return clampi(int(round(h)), 1, CHUNK_HEIGHT - 1)
 
 func _classify_biome(height: int, temp: float, moist: float) -> int:
@@ -91,7 +92,7 @@ func _classify_biome(height: int, temp: float, moist: float) -> int:
 		return Biome.OCEAN
 	if height <= SEA_LEVEL + 1:
 		return Biome.BEACH
-	if height > SEA_LEVEL + 45:
+	if height > SEA_LEVEL + 80:
 		return Biome.SNOW_MOUNTAIN if temp < 0.1 else Biome.MOUNTAIN
 	if temp > 0.45:
 		return Biome.DESERT if moist < 0.0 else Biome.JUNGLE
@@ -132,7 +133,7 @@ func _surface_block(biome: int, height: int) -> int:
 		Biome.SNOW_MOUNTAIN, Biome.TUNDRA:
 			return BlockDB.Type.SNOW
 		Biome.MOUNTAIN:
-			return BlockDB.Type.STONE if height > SEA_LEVEL + 55 else BlockDB.Type.GRASS
+			return BlockDB.Type.STONE if height > SEA_LEVEL + 100 else BlockDB.Type.GRASS
 		Biome.SWAMP:
 			return BlockDB.Type.CLAY
 		_:
@@ -148,7 +149,7 @@ func _subsurface_block(biome: int) -> int:
 			return BlockDB.Type.DIRT
 
 func _should_place_tree(wx: int, wz: int, height: int, biome: int) -> bool:
-	if height <= SEA_LEVEL or height > SEA_LEVEL + 40:
+	if height <= SEA_LEVEL or height > SEA_LEVEL + 70:
 		return false
 	if biome != Biome.FOREST and biome != Biome.JUNGLE and biome != Biome.PLAINS:
 		return false

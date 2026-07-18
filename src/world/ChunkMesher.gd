@@ -1,38 +1,36 @@
 class_name ChunkMesher
 extends RefCounted
-## Builds a renderable ArrayMesh from a chunk's voxels using GREEDY meshing.
+## Builds a renderable ArrayMesh for one VERTICAL SECTION of a chunk column using
+## GREEDY meshing.
 ##
-## For each of the three axes it sweeps the chunk in slices, builds a mask of the
-## visible faces on that plane, then merges coplanar faces of the same block into
-## the largest possible rectangles. This collapses a flat field of thousands of
-## unit quads into a handful of big ones — essential now that blocks are small
-## (see Chunk.VOXEL_SCALE), where a naive mesher would emit ~64x the geometry.
+## A column stores all its voxels in one array; `build_section` meshes only the
+## y-range [y_lo, y_hi) of it, while still SAMPLING the full column (and
+## horizontal neighbours via `sampler`) so face culling across section and chunk
+## boundaries stays correct. Each vertical section becomes its own MeshInstance,
+## which gives free per-section frustum culling, lets empty sections cost nothing,
+## and means an edit only re-meshes the section(s) it touches.
 ##
-## Attributes per vertex:
-##   - UV:   tiling coordinates 0..w / 0..h so a merged quad repeats the block
-##           texture instead of stretching it.
-##   - UV2:  the block's atlas tile origin (constant per quad).
-##   - COLOR.a: seasonal tint weight (1 for grass/leaves, else 0).
-## Ambient occlusion is provided by the environment's SSAO rather than baked into
-## vertices (baked AO would prevent merging); per-voxel colour variation is done
-## in the shader from world position. The mesher never touches the scene tree, so
-## it is safe on a worker thread.
+## Greedy meshing merges coplanar faces of the same block into large rectangles.
+## To avoid a boundary face being emitted by both the section above and below, a
+## y-face is only emitted by the section that owns the solid cell (the owner
+## filter below). Attributes per vertex: UV = tiling coords, UV2 = atlas tile
+## origin, COLOR.a = seasonal tint weight. SSAO supplies edge shading. The mesher
+## never touches the scene tree, so it is safe on a worker thread.
 
 const CS := Chunk.CHUNK_SIZE
 const CH := Chunk.CHUNK_HEIGHT
 
-## Builds an ArrayMesh for `chunk`. `sampler` is Callable(gx, gy, gz) -> int id in
-## world voxel coordinates, used to read across chunk borders. Returns null when
-## the chunk would produce no geometry.
-static func build(chunk: Chunk, sampler: Callable) -> ArrayMesh:
+## Builds an ArrayMesh for the section spanning column-y [y_lo, y_hi). `sampler`
+## is Callable(gx, gy, gz) -> int id in world voxel coordinates. Returns null when
+## the section has no visible geometry.
+static func build_section(chunk: Chunk, sampler: Callable, y_lo: int, y_hi: int) -> ArrayMesh:
 	var opaque := SurfaceArrays.new()
 	var fluid := SurfaceArrays.new()
 	var base_x := chunk.cx * CS
 	var base_z := chunk.cz * CS
-	var dims := [CS, CH, CS]
 
 	for d in 3:
-		_greedy_axis(chunk, sampler, base_x, base_z, dims, d, opaque, fluid)
+		_greedy_axis(chunk, sampler, base_x, base_z, d, y_lo, y_hi, opaque, fluid)
 
 	if opaque.positions.is_empty() and fluid.positions.is_empty():
 		return null
@@ -48,35 +46,63 @@ static func build(chunk: Chunk, sampler: Callable) -> ArrayMesh:
 
 # --- Greedy meshing --------------------------------------------------------
 
-static func _greedy_axis(chunk: Chunk, sampler: Callable, base_x: int, base_z: int, dims: Array, d: int, opaque: SurfaceArrays, fluid: SurfaceArrays) -> void:
+static func _dim(axis: int) -> int:
+	return CH if axis == 1 else CS
+
+static func _greedy_axis(chunk: Chunk, sampler: Callable, base_x: int, base_z: int, d: int, y_lo: int, y_hi: int, opaque: SurfaceArrays, fluid: SurfaceArrays) -> void:
 	var u := (d + 1) % 3
 	var v := (d + 2) % 3
-	var du: int = dims[u]
-	var dv: int = dims[v]
+	# The y axis (1) is restricted to this section; x/z span their full chunk.
+	var u_lo := y_lo if u == 1 else 0
+	var u_hi := y_hi if u == 1 else _dim(u)
+	var v_lo := y_lo if v == 1 else 0
+	var v_hi := y_hi if v == 1 else _dim(v)
+	var du := u_hi - u_lo
+	var dv := v_hi - v_lo
+	if du <= 0 or dv <= 0:
+		return
+
+	# Slice sweep along d. For the y axis we walk the section's boundaries.
+	var slice_lo := (y_lo - 1) if d == 1 else -1
+	var slice_hi := (y_hi - 1) if d == 1 else (_dim(d) - 1)
 
 	var mask_op := PackedInt32Array()
 	var mask_fl := PackedInt32Array()
 	mask_op.resize(du * dv)
 	mask_fl.resize(du * dv)
 
-	for slice in range(-1, dims[d]):
-		# Build the two masks (opaque + water) for this plane.
+	for slice in range(slice_lo, slice_hi + 1):
 		var n := 0
-		for j in dv:
-			for i in du:
+		for j in range(v_lo, v_hi):
+			for i in range(u_lo, u_hi):
 				var pa := _pos(d, u, v, slice, i, j)
 				var pb := _pos(d, u, v, slice + 1, i, j)
 				var a := _vox(chunk, sampler, base_x, base_z, pa)
 				var b := _vox(chunk, sampler, base_x, base_z, pb)
-				mask_op[n] = _face_opaque(a, b)
-				mask_fl[n] = _face_fluid(a, b)
+				var mo := _face_opaque(a, b)
+				var mf := _face_fluid(a, b)
+				if d == 1:
+					mo = _owner_filter(mo, slice, y_lo, y_hi)
+					mf = _owner_filter(mf, slice, y_lo, y_hi)
+				mask_op[n] = mo
+				mask_fl[n] = mf
 				n += 1
-		_emit_plane(mask_op, du, dv, d, u, v, slice, opaque, false)
-		_emit_plane(mask_fl, du, dv, d, u, v, slice, fluid, true)
+		_emit_plane(mask_op, du, dv, u_lo, v_lo, d, u, v, slice, opaque, false)
+		_emit_plane(mask_fl, du, dv, u_lo, v_lo, d, u, v, slice, fluid, true)
 
-## Signed block id of the opaque face between cell a and cell b (b = a + axis),
-## or 0 if none. Positive => face normal points +axis (belongs to a); negative =>
-## normal points -axis (belongs to b).
+## For y-faces, only the section that owns the solid cell emits the face:
+##   +val (face of the cell below the plane) -> owner y = slice
+##   -val (face of the cell above the plane) -> owner y = slice + 1
+## Faces owned by a cell outside [y_lo, y_hi) belong to the adjacent section.
+static func _owner_filter(val: int, slice: int, y_lo: int, y_hi: int) -> int:
+	if val > 0 and slice < y_lo:
+		return 0
+	if val < 0 and slice + 1 >= y_hi:
+		return 0
+	return val
+
+## Signed block id of the opaque face between a and b (b = a + axis), else 0.
+## Positive => normal +axis (owned by a); negative => normal -axis (owned by b).
 static func _face_opaque(a: int, b: int) -> int:
 	var a_solid := BlockDB.is_solid(a)
 	var b_solid := BlockDB.is_solid(b)
@@ -94,36 +120,35 @@ static func _face_fluid(a: int, b: int) -> int:
 		return -BlockDB.Type.WATER
 	return 0
 
-static func _emit_plane(mask: PackedInt32Array, du: int, dv: int, d: int, u: int, v: int, slice: int, sa: SurfaceArrays, is_fluid: bool) -> void:
-	var j := 0
-	while j < dv:
-		var i := 0
-		while i < du:
-			var c := mask[i + j * du]
+static func _emit_plane(mask: PackedInt32Array, du: int, dv: int, u_lo: int, v_lo: int, d: int, u: int, v: int, slice: int, sa: SurfaceArrays, is_fluid: bool) -> void:
+	var lj := 0
+	while lj < dv:
+		var li := 0
+		while li < du:
+			var c := mask[li + lj * du]
 			if c == 0:
-				i += 1
+				li += 1
 				continue
 			# Grow width along u.
 			var w := 1
-			while i + w < du and mask[(i + w) + j * du] == c:
+			while li + w < du and mask[(li + w) + lj * du] == c:
 				w += 1
 			# Grow height along v while the whole row matches.
 			var h := 1
 			var done := false
-			while j + h < dv and not done:
+			while lj + h < dv and not done:
 				for k in w:
-					if mask[(i + k) + (j + h) * du] != c:
+					if mask[(li + k) + (lj + h) * du] != c:
 						done = true
 						break
 				if not done:
 					h += 1
-			_emit_quad(sa, d, u, v, slice, i, j, w, h, c, is_fluid)
-			# Clear the consumed cells.
+			_emit_quad(sa, d, u, v, slice, u_lo + li, v_lo + lj, w, h, c, is_fluid)
 			for hh in h:
 				for ww in w:
-					mask[(i + ww) + (j + hh) * du] = 0
-			i += w
-		j += 1
+					mask[(li + ww) + (lj + hh) * du] = 0
+			li += w
+		lj += 1
 
 static func _emit_quad(sa: SurfaceArrays, d: int, u: int, v: int, slice: int, i: int, j: int, w: int, h: int, c: int, is_fluid: bool) -> void:
 	var id := absi(c)
@@ -163,15 +188,16 @@ static func _push(sa: SurfaceArrays, pos: Vector3, normal: Vector3, col: Color, 
 
 # --- Helpers ---------------------------------------------------------------
 
-## Reads a voxel id at chunk-local position `p` (an [x, y, z] array); falls back
-## to the world sampler when p is outside this chunk's x/z columns.
+## Reads a voxel id at column-local position `p` ([x, y, z]); reads the full
+## column directly (so vertical section boundaries cull correctly) and falls back
+## to the world sampler for horizontal neighbours in adjacent columns.
 static func _vox(chunk: Chunk, sampler: Callable, base_x: int, base_z: int, p: Array) -> int:
 	var px: int = p[0]
 	var py: int = p[1]
 	var pz: int = p[2]
-	if py < 0 or py >= CH:
-		return BlockDB.Type.AIR
 	if px >= 0 and px < CS and pz >= 0 and pz < CS:
+		if py < 0 or py >= CH:
+			return BlockDB.Type.AIR
 		return chunk.voxels[Chunk.index(px, py, pz)]
 	return int(sampler.call(base_x + px, py, base_z + pz))
 
