@@ -33,7 +33,14 @@ Make the core scale and look better before piling gameplay on it.
       own MeshInstance for free frustum culling, and an edit re-meshes only the
       section it touches). Face culling between sections stays automatic. This is
       the substrate for true 3D LOD (next), and terrain now uses the extra height.
-- ⬜ **Chunk LOD** + distance-based mesh simplification (per-section)
+- 🟡 **Distance LOD** — columns beyond the full-detail radius render as a single
+      coarse (1/2, 1/4 resolution) mesh, re-meshed as their LOD band changes with
+      the player. Reduces the geometry cost of the outer rings; minor cracks at
+      LOD boundaries are an accepted first pass (skirts/stitching later).
+- ⬜ **Sparse / uniform-section storage** — the real blocker for a far, km-scale
+      view: deep uniform rock currently costs 512 KB per column, capping how many
+      columns can be loaded. Store all-one-block sections as a single id so tall
+      columns are cheap, then LOD radius (and view distance) can grow.
 - 🟡 **Texture atlas** with per-block 16×16 tiles + an in-game pixel **Texture
       Editor** (F1) that saves PNGs picked up live by the atlas. PBR maps,
       connected textures and a bevelled-edge shader still to come.

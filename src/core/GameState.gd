@@ -12,13 +12,15 @@ const DEFAULT_SEED := 1337
 
 var world_seed: int = DEFAULT_SEED
 
-## How many chunks (radius, in chunk units) to keep loaded at FULL detail around
-## the player. A chunk spans 16 * Chunk.VOXEL_SCALE = 8 m. Kept modest because
-## columns are now 2048 voxels tall; the LOD system extends the visible range
-## beyond this with cheap coarse chunks.
-var view_distance_chunks: int = 6
-## Additional rings (beyond view_distance_chunks) kept as lower-detail LOD chunks.
-var lod_distance_chunks: int = 18
+## Chunk radius kept at FULL detail around the player (a chunk spans
+## 16 * Chunk.VOXEL_SCALE = 8 m). LOD reduces the GEOMETRY cost of the outer
+## rings, but every loaded column still stores full-resolution voxel data
+## (~512 KB at 2048 tall), so the TOTAL radius (lod_distance_chunks) is what
+## bounds memory. These are deliberately modest; the real unlock for a far,
+## km-scale view is sparse/uniform-section storage — see docs/ROADMAP.md.
+var view_distance_chunks: int = 4
+## Total loaded radius; rings beyond view_distance render as coarse LOD columns.
+var lod_distance_chunks: int = 6
 
 ## Maximum chunk columns to (re)mesh per frame. Building a column now means
 ## meshing its handful of non-buried vertical sections plus re-culling neighbours,

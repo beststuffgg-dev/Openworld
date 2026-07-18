@@ -21,7 +21,9 @@ var _generator: TerrainGenerator
 var _chunks: Dictionary = {}          # Vector2i -> Chunk
 var _states: Dictionary = {}          # Vector2i -> State
 var _tasks: Dictionary = {}           # Vector2i -> WorkerThreadPool task id
-var _nodes: Dictionary = {}           # Vector2i -> MeshInstance3D
+var _nodes: Dictionary = {}           # Vector2i -> Array[MeshInstance3D] per section (detailed)
+var _lod_nodes: Dictionary = {}       # Vector2i -> MeshInstance3D (single coarse mesh)
+var _column_lod: Dictionary = {}      # Vector2i -> int step (0 = full detail, 2/4 = LOD)
 var _mesh_queue: Array[Vector2i] = [] # chunks with data ready to mesh
 
 var _last_center := Vector2i(999999, 999999)
@@ -42,17 +44,37 @@ func _physics_process(_delta: float) -> void:
 		_last_center = center
 		_update_requested(center)
 		_unload_far(center)
+		_reevaluate_lod(center)
 
 	_collect_generated()
 	_drain_mesh_queue()
+
+## Distance band -> LOD step. Full detail near the player, coarser further out.
+func _lod_for(dist: float) -> int:
+	if dist <= GameState.view_distance_chunks:
+		return 0
+	var mid := GameState.view_distance_chunks + (GameState.lod_distance_chunks - GameState.view_distance_chunks) / 2.0
+	return 2 if dist <= mid else 4
+
+## Re-mesh columns whose LOD band changed as the player moved.
+func _reevaluate_lod(center: Vector2i) -> void:
+	for coord in _states.keys():
+		var new_lod := _lod_for(Vector2(coord).distance_to(Vector2(center)))
+		if int(_column_lod.get(coord, 0)) != new_lod:
+			_column_lod[coord] = new_lod
+			if _states[coord] == State.READY:
+				_states[coord] = State.GENERATED
+				if not _mesh_queue.has(coord):
+					_mesh_queue.append(coord)
 
 # ---------------------------------------------------------------------------
 # Streaming
 # ---------------------------------------------------------------------------
 
 func _update_requested(center: Vector2i) -> void:
-	var r := GameState.view_distance_chunks
-	# Request nearest chunks first so the world fills outward from the player.
+	# Load out to the LOD radius; nearer rings render at full detail, further ones
+	# as coarse LOD columns so the view (and tall mountains) reach much farther.
+	var r := GameState.lod_distance_chunks
 	var wanted: Array[Vector2i] = []
 	for dz in range(-r, r + 1):
 		for dx in range(-r, r + 1):
@@ -62,6 +84,7 @@ func _update_requested(center: Vector2i) -> void:
 	wanted.sort_custom(func(a, b): return a.distance_squared_to(center) < b.distance_squared_to(center))
 	for coord in wanted:
 		if not _states.has(coord):
+			_column_lod[coord] = _lod_for(Vector2(coord).distance_to(Vector2(center)))
 			_request_chunk(coord)
 
 func _request_chunk(coord: Vector2i) -> void:
@@ -102,15 +125,54 @@ func _remesh_ready_neighbors(coord: Vector2i) -> void:
 	for offset in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		_remesh_now(coord + offset)
 
-## Builds all vertical section meshes for a column and marks it READY.
+## Meshes a column at its current LOD (detailed per-section, or coarse) and marks
+## it READY.
 func _build_chunk_node(coord: Vector2i) -> void:
-	if not _nodes.has(coord):
-		var arr := []
-		arr.resize(Chunk.SECTIONS)  # untyped Array fills with null
-		_nodes[coord] = arr
-	for sec in Chunk.SECTIONS:
-		_build_section_node(coord, sec)
+	var step := int(_column_lod.get(coord, 0))
+	if step == 0:
+		_free_lod_node(coord)  # in case it was previously an LOD column
+		if not _nodes.has(coord):
+			var arr := []
+			arr.resize(Chunk.SECTIONS)  # untyped Array fills with null
+			_nodes[coord] = arr
+		for sec in Chunk.SECTIONS:
+			_build_section_node(coord, sec)
+	else:
+		_free_detailed_nodes(coord)  # in case it was previously detailed
+		_build_lod_node(coord, step)
 	_states[coord] = State.READY
+
+## Builds the single coarse mesh for a distant (LOD) column. LOD columns skip
+## collision — the player is never near enough to touch them before they upgrade
+## to full detail.
+func _build_lod_node(coord: Vector2i, step: int) -> void:
+	var chunk: Chunk = _chunks.get(coord)
+	if chunk == null:
+		return
+	var mesh := ChunkMesher.build_column_lod(chunk, _sample_block, step)
+	var mi: MeshInstance3D = _lod_nodes.get(coord)
+	if mesh == null:
+		_free_lod_node(coord)
+		return
+	if mi == null:
+		mi = MeshInstance3D.new()
+		mi.scale = Vector3.ONE * Chunk.VOXEL_SCALE
+		mi.position = chunk.world_origin() * Chunk.VOXEL_SCALE
+		add_child(mi)
+		_lod_nodes[coord] = mi
+	mi.mesh = mesh
+
+func _free_lod_node(coord: Vector2i) -> void:
+	if _lod_nodes.has(coord):
+		_lod_nodes[coord].queue_free()
+		_lod_nodes.erase(coord)
+
+func _free_detailed_nodes(coord: Vector2i) -> void:
+	if _nodes.has(coord):
+		for mi in _nodes[coord]:
+			if mi:
+				mi.queue_free()
+		_nodes.erase(coord)
 
 ## Builds (or clears) the MeshInstance for one vertical section of a column.
 func _build_section_node(coord: Vector2i, sec: int) -> void:
@@ -170,7 +232,7 @@ func _section_buried(coord: Vector2i, chunk: Chunk, sec: int) -> bool:
 	return true
 
 func _unload_far(center: Vector2i) -> void:
-	var r := GameState.view_distance_chunks + 2
+	var r := GameState.lod_distance_chunks + 2
 	var to_remove: Array[Vector2i] = []
 	for coord in _states.keys():
 		if coord.distance_to(center) > r:
@@ -184,6 +246,8 @@ func _free_chunk(coord: Vector2i) -> void:
 		# chunk that's about to disappear mid-flight.
 		WorkerThreadPool.wait_for_task_completion(_tasks[coord])
 		_tasks.erase(coord)
+	_free_lod_node(coord)
+	_column_lod.erase(coord)
 	if _nodes.has(coord):
 		for mi in _nodes[coord]:
 			if mi:
@@ -284,11 +348,15 @@ func _remesh_now(coord: Vector2i) -> void:
 		return
 	_build_chunk_node(coord)
 
-## Rebuilds a single section of a READY column.
+## Rebuilds a single section of a READY column. For a coarse LOD column (edits
+## there are rare — it's far away) the whole column is rebuilt instead.
 func _remesh_section(coord: Vector2i, sec: int) -> void:
 	if sec < 0 or sec >= Chunk.SECTIONS:
 		return
 	if _states.get(coord) != State.READY:
+		return
+	if int(_column_lod.get(coord, 0)) != 0:
+		_build_chunk_node(coord)
 		return
 	_build_section_node(coord, sec)
 

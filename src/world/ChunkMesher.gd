@@ -44,6 +44,76 @@ static func build_section(chunk: Chunk, sampler: Callable, y_lo: int, y_hi: int)
 		mesh.surface_set_material(mesh.get_surface_count() - 1, _fluid_material())
 	return mesh
 
+# --- LOD: coarse whole-column mesh -----------------------------------------
+
+## Meshes an entire column at 1/step resolution into a single mesh, for distant
+## columns. Each coarse cell samples the fine voxel at its centre, and quads are
+## scaled by `step`. No per-section split or owner filter is needed (the whole
+## column is one mesh); interior faces still cull, so buried rock stays cheap.
+## Minor cracks can appear where a coarse column meets a finer neighbour — an
+## accepted first-pass limitation (skirts/stitching are a later refinement).
+static func build_column_lod(chunk: Chunk, sampler: Callable, step: int) -> ArrayMesh:
+	var opaque := SurfaceArrays.new()
+	var fluid := SurfaceArrays.new()
+	var base_x := chunk.cx * CS
+	var base_z := chunk.cz * CS
+	@warning_ignore("integer_division")
+	var cs := CS / step
+	@warning_ignore("integer_division")
+	var ch := CH / step
+
+	for d in 3:
+		_greedy_axis_coarse(chunk, sampler, base_x, base_z, d, cs, ch, step, opaque, fluid)
+
+	if opaque.positions.is_empty() and fluid.positions.is_empty():
+		return null
+
+	var mesh := ArrayMesh.new()
+	if not opaque.positions.is_empty():
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, opaque.to_arrays())
+		mesh.surface_set_material(mesh.get_surface_count() - 1, get_opaque_material())
+	if not fluid.positions.is_empty():
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, fluid.to_arrays())
+		mesh.surface_set_material(mesh.get_surface_count() - 1, _fluid_material())
+	return mesh
+
+static func _greedy_axis_coarse(chunk: Chunk, sampler: Callable, base_x: int, base_z: int, d: int, cs: int, ch: int, step: int, opaque: SurfaceArrays, fluid: SurfaceArrays) -> void:
+	var u := (d + 1) % 3
+	var v := (d + 2) % 3
+	var du := ch if u == 1 else cs
+	var dv := ch if v == 1 else cs
+	var sdim := ch if d == 1 else cs
+
+	var mask_op := PackedInt32Array()
+	var mask_fl := PackedInt32Array()
+	mask_op.resize(du * dv)
+	mask_fl.resize(du * dv)
+
+	for slice in range(-1, sdim):
+		var n := 0
+		for j in dv:
+			for i in du:
+				var a := _cvox(chunk, sampler, base_x, base_z, _pos(d, u, v, slice, i, j), step)
+				var b := _cvox(chunk, sampler, base_x, base_z, _pos(d, u, v, slice + 1, i, j), step)
+				mask_op[n] = _face_opaque(a, b)
+				mask_fl[n] = _face_fluid(a, b)
+				n += 1
+		_emit_plane(mask_op, du, dv, 0, 0, d, u, v, slice, opaque, false, step)
+		_emit_plane(mask_fl, du, dv, 0, 0, d, u, v, slice, fluid, true, step)
+
+## Samples the representative voxel at the centre of a coarse cell.
+static func _cvox(chunk: Chunk, sampler: Callable, base_x: int, base_z: int, cell: Array, step: int) -> int:
+	@warning_ignore("integer_division")
+	var half := step / 2
+	var fx: int = cell[0] * step + half
+	var fy: int = cell[1] * step + half
+	var fz: int = cell[2] * step + half
+	if fx >= 0 and fx < CS and fz >= 0 and fz < CS:
+		if fy < 0 or fy >= CH:
+			return BlockDB.Type.AIR
+		return chunk.voxels[Chunk.index(fx, fy, fz)]
+	return int(sampler.call(base_x + fx, fy, base_z + fz))
+
 # --- Greedy meshing --------------------------------------------------------
 
 static func _dim(axis: int) -> int:
@@ -120,7 +190,7 @@ static func _face_fluid(a: int, b: int) -> int:
 		return -BlockDB.Type.WATER
 	return 0
 
-static func _emit_plane(mask: PackedInt32Array, du: int, dv: int, u_lo: int, v_lo: int, d: int, u: int, v: int, slice: int, sa: SurfaceArrays, is_fluid: bool) -> void:
+static func _emit_plane(mask: PackedInt32Array, du: int, dv: int, u_lo: int, v_lo: int, d: int, u: int, v: int, slice: int, sa: SurfaceArrays, is_fluid: bool, scale: int = 1) -> void:
 	var lj := 0
 	while lj < dv:
 		var li := 0
@@ -143,19 +213,21 @@ static func _emit_plane(mask: PackedInt32Array, du: int, dv: int, u_lo: int, v_l
 						break
 				if not done:
 					h += 1
-			_emit_quad(sa, d, u, v, slice, u_lo + li, v_lo + lj, w, h, c, is_fluid)
+			_emit_quad(sa, d, u, v, slice, u_lo + li, v_lo + lj, w, h, c, is_fluid, scale)
 			for hh in h:
 				for ww in w:
 					mask[(li + ww) + (lj + hh) * du] = 0
 			li += w
 		lj += 1
 
-static func _emit_quad(sa: SurfaceArrays, d: int, u: int, v: int, slice: int, i: int, j: int, w: int, h: int, c: int, is_fluid: bool) -> void:
+## `scale` (1 for full detail, 2/4/… for LOD) multiplies voxel positions so a
+## coarse quad covers `scale` voxels per cell.
+static func _emit_quad(sa: SurfaceArrays, d: int, u: int, v: int, slice: int, i: int, j: int, w: int, h: int, c: int, is_fluid: bool, scale: int = 1) -> void:
 	var id := absi(c)
 	var positive := c > 0
-	var base := _axis(d, slice + 1) + _axis(u, i) + _axis(v, j)
-	var uax := _axis(u, w)
-	var vax := _axis(v, h)
+	var base := _axis(d, (slice + 1) * scale) + _axis(u, i * scale) + _axis(v, j * scale)
+	var uax := _axis(u, w * scale)
+	var vax := _axis(v, h * scale)
 	var c0 := base
 	var c1 := base + uax
 	var c2 := base + uax + vax
