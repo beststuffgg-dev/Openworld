@@ -9,6 +9,7 @@ func _configure() -> void:
 	aggro_radius = 0.0       # passive: does not charge
 	jump_strength = 4.5
 	max_health = 15
+	food_value = 40.0
 	col_height = 1.0
 	col_radius = 0.45
 

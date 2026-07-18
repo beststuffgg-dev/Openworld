@@ -43,18 +43,22 @@ Make the core scale and look better before piling gameplay on it.
       templates + procedural variation during chunk post-processing
 - ⬜ Biome blending of vegetation, grass tint, foliage density
 
-## Phase 3 — Survival & gameplay systems ⬜
+## Phase 3 — Survival & gameplay systems 🟡
 
-- ⬜ Health / hunger / thirst / temperature / stamina / sleep
+- 🟡 Health / hunger / stamina with starvation, regen and stamina-gated sprint,
+      plus death & respawn. Thirst, temperature, sleep and disease still to come.
 - ⬜ Inventory (drag-drop, stacks, hotbar, equipment slots), item registry
 - ⬜ Crafting (workbench, smithing, cooking, alchemy) + recipe data
 - ⬜ Farming (soil, irrigation, growth by season), fishing, animal breeding
-- ⬜ Combat (melee, bows, magic, shields, dodge), status effects
+- 🟡 Combat — melee: attack animals (they flee or retaliate), bulls charge and
+      damage you, killing animals feeds you. Bows, magic, shields and dodge later.
 - ⬜ Creative mode (flight, unlimited blocks, no damage, blueprint copy/paste)
 
 ## Phase 4 — Environment & atmosphere 🟡
 
-- ⬜ Weather system (rain, storms, snow, fog, wind) affecting gameplay
+- 🟡 Weather — evolving clear/cloudy/rain/storm/snow, season-biased, with GPU
+      rain & snow that follow the player, fog + sunlight changes, and storm
+      lightning. Gameplay effects (crops, rivers, temperature) still to come.
 - 🟡 Seasons — live foliage recolour (Spring/Summer/Autumn/Winter) via a shader
       season uniform, no remesh; drives animal migration. Crop/temperature
       effects still to come.

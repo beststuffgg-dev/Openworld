@@ -13,6 +13,7 @@ const SPRINT_SPEED := 8.5
 const JUMP_VELOCITY := 6.0
 const MOUSE_SENSITIVITY := 0.0025
 const REACH := 6.0
+const ATTACK_DAMAGE := 6.0
 
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _camera: Camera3D
@@ -21,12 +22,20 @@ var _pitch: float = 0.0
 
 var world: VoxelWorld
 var selected_index: int = 0
+var stats: PlayerStats
+
+var _spawn_point := Vector3.ZERO
+var _respawning := false
 
 signal selection_changed(block_id: int)
 signal spawn_ready
 
 func _ready() -> void:
 	_build_body()
+	stats = PlayerStats.new()
+	stats.name = "PlayerStats"
+	add_child(stats)
+	stats.died.connect(_on_died)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _build_body() -> void:
@@ -47,6 +56,7 @@ func _build_body() -> void:
 	_ray = RayCast3D.new()
 	_ray.target_position = Vector3(0, 0, -REACH)
 	_ray.collide_with_bodies = true
+	_ray.add_exception(self)  # never hit our own capsule
 	_camera.add_child(_ray)
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -63,11 +73,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			_cycle_selection(-1)
 		elif Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			if event.button_index == MOUSE_BUTTON_LEFT:
-				_break_block()
+				_use_primary()
 			elif event.button_index == MOUSE_BUTTON_RIGHT:
 				_place_block()
 
 func _physics_process(delta: float) -> void:
+	if _respawning:
+		# Wait for the spawn area to stream back in, then drop onto it.
+		if world and world.is_ready_at(global_position) and _drop_to_ground():
+			_respawning = false
+		return
+
 	if not is_on_floor():
 		velocity.y -= _gravity * delta
 	if Input.is_action_just_pressed("jump") and is_on_floor():
@@ -75,7 +91,12 @@ func _physics_process(delta: float) -> void:
 
 	var input := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 	var dir := (transform.basis * Vector3(input.x, 0, input.y)).normalized()
-	var speed := SPRINT_SPEED if Input.is_action_pressed("sprint") else WALK_SPEED
+
+	# Sprinting is gated by stamina; the stats node drains/recovers it.
+	var want_sprint := Input.is_action_pressed("sprint") and dir != Vector3.ZERO and stats.can_sprint()
+	stats.sprinting = want_sprint
+	var speed := SPRINT_SPEED if want_sprint else WALK_SPEED
+
 	if dir:
 		velocity.x = dir.x * speed
 		velocity.z = dir.z * speed
@@ -90,12 +111,31 @@ func _physics_process(delta: float) -> void:
 func try_ground_spawn() -> bool:
 	if world == null or not world.is_ready_at(global_position):
 		return false
+	if _drop_to_ground():
+		_spawn_point = global_position
+		spawn_ready.emit()
+		return true
+	return false
+
+func _drop_to_ground() -> bool:
 	for y in range(Chunk.CHUNK_HEIGHT - 1, 0, -1):
 		if BlockDB.is_solid(world.get_block_world(Vector3i(int(global_position.x), y, int(global_position.z)))):
 			global_position.y = y + 2.0
-			spawn_ready.emit()
+			velocity = Vector3.ZERO
 			return true
 	return false
+
+## Called externally (bull charge, etc.) to hurt the player.
+func receive_attack(amount: float) -> void:
+	if stats:
+		stats.damage(amount)
+
+func _on_died() -> void:
+	# Respawn back at the original spawn column with fresh stats.
+	stats.reset()
+	global_position = Vector3(_spawn_point.x, Chunk.CHUNK_HEIGHT, _spawn_point.z)
+	velocity = Vector3.ZERO
+	_respawning = true
 
 func selected_block() -> int:
 	return BlockDB.placeable[selected_index]
@@ -105,8 +145,18 @@ func _cycle_selection(dir: int) -> void:
 	selected_index = (selected_index + dir + count) % count
 	selection_changed.emit(selected_block())
 
-func _break_block() -> void:
+## Left click: attack an animal if the ray hits one, otherwise mine the block.
+func _use_primary() -> void:
 	if not _ray.is_colliding():
+		return
+	var collider := _ray.get_collider()
+	if collider is Animal:
+		var animal := collider as Animal
+		var food := animal.food_value
+		if animal.hurt(ATTACK_DAMAGE):
+			# Killing an animal feeds the player (stand-in for a food item until
+			# the inventory system lands).
+			stats.eat(food)
 		return
 	var point := _ray.get_collision_point()
 	var normal := _ray.get_collision_normal()

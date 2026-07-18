@@ -42,7 +42,7 @@ scene files to merge.
 | Jump | `Space` |
 | Sprint | `Shift` |
 | Look | Mouse |
-| Break block | Left click |
+| Break block / attack animal | Left click |
 | Place block | Right click |
 | Change block | Mouse wheel |
 | Release / capture mouse | `Esc` |
@@ -66,6 +66,12 @@ scene files to merge.
 - **Wildlife** — procedurally-built chickens (skittish), cows (passive) and
   bulls (charge when you get close), spawned around you by a season-aware
   spawner, with **seasonal migration** when the season turns.
+- **Survival & combat** — health / hunger / stamina bars, starvation, health
+  regen, stamina-gated sprint, and death + respawn. Left-click attacks animals
+  (they flee or, for bulls, charge back and hurt you); killing one feeds you.
+- **Weather** — evolving clear / cloudy / rain / storm / snow, biased by season
+  (snow in winter, storms in summer), with GPU rain & snow that follow you, fog
+  and sunlight shifts, and lightning during storms.
 - **Per-vertex colour variation** to break up flat terrain.
 - **Texture system + in-game pixel Texture Editor** (press **F1**): paint a
   16×16 texture for any block, save it, and it appears in the world immediately.
@@ -98,7 +104,9 @@ src/
     VoxelWorld.gd        Chunk streaming, collision, block editing
     TextureAtlas.gd      Runtime block texture atlas (autoload: Textures)
     voxel_terrain.gdshader  Opaque terrain shader (atlas + shade + season tint)
-  player/Player.gd       First-person controller + block interaction
+  player/
+    Player.gd            First-person controller + block/animal interaction
+    PlayerStats.gd       Health / hunger / stamina survival stats
   entities/
     Animal.gd            Base wildlife AI (wander/flee/charge/migrate)
     Chicken.gd Cow.gd Bull.gd   Species (procedural box models)
@@ -106,6 +114,7 @@ src/
   environment/
     DayNightCycle.gd     Sun + sky over a 24h cycle
     SeasonManager.gd     Seasons + live foliage tinting
+    WeatherManager.gd    Evolving weather + precipitation + lightning
   ui/HUD.gd
 tools/TextureEditor.tscn/.gd   In-game pixel texture editor (F1)
 textures/blocks/         Optional shipped block PNGs (16×16)

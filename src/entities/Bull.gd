@@ -9,6 +9,8 @@ func _configure() -> void:
 	aggro_radius = 7.0       # charges when the player is near
 	jump_strength = 5.0
 	max_health = 25
+	food_value = 45.0
+	charge_damage = 12.0
 	col_height = 1.1
 	col_radius = 0.5
 

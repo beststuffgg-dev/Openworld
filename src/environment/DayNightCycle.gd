@@ -17,6 +17,8 @@ var _env: Environment
 var time_of_day: float  # hours, 0..24
 ## Total in-game days elapsed since start (fractional). Seasons key off this.
 var elapsed_days: float = 0.0
+## Multiplier the weather system applies to sunlight (1 = clear, < 1 = overcast).
+var light_scale: float = 1.0
 
 signal hour_changed(hour: float)
 
@@ -49,11 +51,11 @@ func _apply() -> void:
 	var day_color := Color(1.0, 0.98, 0.92)
 	var dusk_color := Color(1.0, 0.55, 0.30)
 	_sun.light_color = dusk_color.lerp(day_color, 1.0 - horizon)
-	_sun.light_energy = lerpf(0.05, 1.2, day_amount)
+	_sun.light_energy = lerpf(0.05, 1.2, day_amount) * light_scale
 	_sun.visible = elevation > -0.15
 
 	if _env:
-		_env.ambient_light_energy = lerpf(0.15, 0.6, day_amount)
+		_env.ambient_light_energy = lerpf(0.15, 0.6, day_amount) * lerpf(0.6, 1.0, light_scale)
 		var sky_day := Color(0.42, 0.62, 0.86)
 		var sky_night := Color(0.03, 0.04, 0.09)
 		var sky := sky_night.lerp(sky_day, day_amount)

@@ -13,6 +13,9 @@ var _player: Player
 var _cycle: DayNightCycle
 var _seasons: SeasonManager
 var _spawner: MobSpawner
+var _weather: WeatherManager
+var _sun: DirectionalLight3D
+var _env: Environment
 var _spawned := false
 
 func _ready() -> void:
@@ -20,6 +23,7 @@ func _ready() -> void:
 	_setup_world()
 	_setup_player()
 	_setup_seasons_and_mobs()
+	_setup_weather()
 	_setup_ui()
 	print("[Project Horizons] Vertical slice booted. Seed: %d" % GameState.world_seed)
 
@@ -47,12 +51,14 @@ func _setup_environment() -> void:
 
 	world_env.environment = env
 	add_child(world_env)
+	_env = env
 
 	var sun := DirectionalLight3D.new()
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 200.0
 	sun.rotation_degrees = Vector3(-50, -60, 0)
 	add_child(sun)
+	_sun = sun
 
 	_cycle = DayNightCycle.new()
 	add_child(_cycle)
@@ -83,11 +89,17 @@ func _setup_seasons_and_mobs() -> void:
 	add_child(_spawner)
 	_spawner.setup(_world, _player, _seasons)
 
+func _setup_weather() -> void:
+	_weather = WeatherManager.new()
+	_weather.name = "WeatherManager"
+	add_child(_weather)
+	_weather.setup(_env, _cycle, _player, _seasons)
+
 func _setup_ui() -> void:
 	var hud := HUD.new()
 	hud.name = "HUD"
 	add_child(hud)
-	hud.setup(_player, _cycle, _seasons)
+	hud.setup(_player, _cycle, _seasons, _weather)
 
 func _process(_delta: float) -> void:
 	if not _spawned:

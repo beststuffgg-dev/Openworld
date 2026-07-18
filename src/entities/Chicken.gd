@@ -8,6 +8,7 @@ func _configure() -> void:
 	flee_radius = 6.0        # skittish
 	jump_strength = 4.0
 	max_health = 4
+	food_value = 12.0
 	col_height = 0.5
 	col_radius = 0.2
 
