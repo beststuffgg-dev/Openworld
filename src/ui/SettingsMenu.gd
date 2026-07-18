@@ -86,6 +86,23 @@ func _build() -> void:
 	box.add_child(_brush_slider)
 	_on_brush_changed(_player.brush_size if _player else 1)
 
+	# Build-shape tool.
+	var shape_label := Label.new()
+	shape_label.text = "Build shape"
+	box.add_child(shape_label)
+	var shape_pick := OptionButton.new()
+	shape_pick.add_item("Off")  # index 0
+	for i in ShapeBuilder.Shape.size():
+		shape_pick.add_item(ShapeBuilder.shape_name(i))
+	shape_pick.selected = (_player.shape_type + 1) if (_player and _player.shape_active) else 0
+	shape_pick.item_selected.connect(func(idx): _player.set_shape(idx))
+	box.add_child(shape_pick)
+	var flat_toggle := CheckButton.new()
+	flat_toggle.text = "Flat (2D)"
+	flat_toggle.button_pressed = _player.shape_flat if _player else false
+	flat_toggle.toggled.connect(func(on): _player.set_shape_flat(on))
+	box.add_child(flat_toggle)
+
 	box.add_child(_menu_button("Resume", func(): _apply_open(false)))
 	box.add_child(_menu_button("Texture Editor", _open_texture_editor))
 

@@ -13,6 +13,7 @@ const BAR_HEIGHT := 16.0
 var _crosshair: Label
 var _info: Label
 var _selected: Label
+var _shape: Label
 
 var _player: Player
 var _cycle: DayNightCycle
@@ -42,6 +43,8 @@ func _ready() -> void:
 
 	_info = _make_label(Vector2(12, 10))
 	_selected = _make_label(Vector2(12, 34))
+	_shape = _make_label(Vector2(12, 122))
+	_shape.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
 	_build_stat_bars()
 
 func _make_label(pos: Vector2) -> Label:
@@ -106,6 +109,7 @@ func _process(_delta: float) -> void:
 		weather = "  %s" % _weather.weather_name()
 	_info.text = "XYZ  %d, %d, %d%s%s%s" % [int(p.x), int(p.y), int(p.z), clock, season, weather]
 	_refresh_selected()
+	_shape.text = _player.shape_status_text()
 
 	if _player.stats:
 		_health_fill.size.x = BAR_WIDTH * _player.stats.health_ratio()

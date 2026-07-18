@@ -342,6 +342,43 @@ func set_blocks_bulk(minv: Vector3i, maxv: Vector3i, id: int, exclude := AABB())
 			_remesh_section(coord, sec)
 	return changed
 
+## Writes an arbitrary list of voxels (Array of Vector3i) to `id`, remeshing each
+## affected section once. Used by the shape builder. `exclude` is an optional
+## voxel-space AABB left untouched (e.g. the player). Returns voxels changed.
+func stamp_voxels(voxels: Array, id: int, exclude := AABB()) -> int:
+	var changed := 0
+	var has_exclude := exclude.size != Vector3.ZERO
+	var cols := {}
+	var min_y := CHUNK_HEIGHT
+	var max_y := 0
+	for v in voxels:
+		if v.y < 0 or v.y >= CHUNK_HEIGHT:
+			continue
+		if has_exclude and exclude.has_point(Vector3(v)):
+			continue
+		var coord := _voxel_to_chunk(v.x, v.z)
+		var chunk: Chunk = _chunks.get(coord)
+		if chunk == null:
+			continue
+		chunk.set_local(v.x - coord.x * CHUNK_SIZE, v.y, v.z - coord.y * CHUNK_SIZE, id)
+		cols[coord] = true
+		min_y = mini(min_y, v.y)
+		max_y = maxi(max_y, v.y)
+		changed += 1
+	if changed == 0:
+		return 0
+	var sec_lo := clampi((min_y - 1) / Chunk.SECTION_H, 0, Chunk.SECTIONS - 1)
+	var sec_hi := clampi((max_y + 1) / Chunk.SECTION_H, 0, Chunk.SECTIONS - 1)
+	var to_remesh := {}
+	for coord in cols:
+		to_remesh[coord] = true
+		for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			to_remesh[coord + off] = true
+	for coord in to_remesh:
+		for sec in range(sec_lo, sec_hi + 1):
+			_remesh_section(coord, sec)
+	return changed
+
 ## Rebuilds every section of a READY column (used when a new neighbour appears).
 func _remesh_now(coord: Vector2i) -> void:
 	if _states.get(coord) != State.READY:

@@ -71,6 +71,10 @@ more detailed. Use a larger brush to place or dig many at once (up to 32³).
   separately frustum-culled, and an edit only re-meshes the section it touches.
 - **0.5 m blocks + an NxNxN brush** — build at higher detail, and place or dig
   boxes up to 32³ at once (single-remesh bulk edits), brush size on `[` / `]`.
+- **Shape builder** — pick a shape in Settings (Cube / Sphere / Slope /
+  Cylinder, 2D or 3D), then click point A, click point B, scroll to size it (a
+  ghost preview shows the extent), and click to stamp it. Slopes ramp between the
+  two points at the angle you set. Right-click cancels.
 - **Mine & build** any block, with correct chunk-seam remeshing.
 - **Day/night cycle** with a moving sun, warm sunrises and darkening nights.
 - **Seasons** — Spring/Summer/Autumn/Winter recolour grass and leaves live

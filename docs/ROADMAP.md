@@ -66,7 +66,9 @@ Make the core scale and look better before piling gameplay on it.
 - ⬜ Farming (soil, irrigation, growth by season), fishing, animal breeding
 - 🟡 Combat — melee: attack animals (they flee or retaliate), bulls charge and
       damage you, killing animals feeds you. Bows, magic, shields and dodge later.
-- ⬜ Creative mode (flight, unlimited blocks, no damage, blueprint copy/paste)
+- 🟡 Building aids — a shape builder (cube / sphere / slope / cylinder, 2D & 3D)
+      with a two-point + scroll-to-size flow and ghost preview. Flight, unlimited
+      blocks, no-damage creative mode and blueprint copy/paste still to come.
 
 ## Phase 4 — Environment & atmosphere 🟡
 
